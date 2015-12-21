@@ -58,5 +58,43 @@ class TermTestSuite extends LeoTestSuite {
       }
     }
   }
+}
 
+
+class TermNormalizationTestSuite extends LeoTestSuite {
+
+  import impl.Signature
+  import Term._
+  import leo.Checked
+
+  test("etaExpand - all binders of type i", Checked) {
+    val s = getFreshSignature
+    val a = mkAtom(s.addUninterpreted("a", (s.i->:s.i)->:s.i))
+    val t = Term.λ(s.i)(Term.mkTermApp(a,Term.mkTermApp(Term.mkMetaVar(Type.mkFunType(s.i,s.i->:s.i), 1), Term.mkBound(s.i,1))))
+    val m = Term.λ(s.i)(Term.mkTermApp(a,Term.λ(s.i)(Term.mkTermApp(
+      Term.mkMetaVar(Type.mkFunType(s.i,s.i->:s.i), 1), List(Term.mkBound(s.i,2), Term.mkBound(s.i,1))))))
+    assert(m.equals(t.etaExpand))
+  }
+
+  test("etaExpand - the two binders of different type", Checked) {
+    val s = getFreshSignature
+    val a = mkAtom(s.addUninterpreted("a", ((s.i->:s.i)->:s.i)->:s.i))
+    println("type of a: " + a.ty.pretty)
+    val y = Term.mkMetaVar(Type.mkFunType(s.i,(s.i->:s.i)->:s.i), 1)
+    println("type of sV1: " + y.ty.pretty)
+    val t = Term.λ(s.i)(Term.mkTermApp(a,Term.mkTermApp(y,
+      Term.mkBound(s.i,1))))
+    println("type of t: " + t.ty.pretty)
+    println("t: " + t.pretty)
+    println("is t typed properly? " + t.typeCheck)
+    println("t.etaExpand: " + t.etaExpand.pretty)
+    println("type of t.etaExpand: " + t.etaExpand.ty.pretty)
+    println("is t.etaExpand typed properly? " + t.etaExpand.typeCheck + " - really?")
+
+    val m = Term.λ(s.i)(Term.mkTermApp(a,Term.λ(s.i->:s.i)(Term.mkTermApp(
+      y, List(Term.mkBound(s.i,2), Term.mkBound(s.i,1))))))
+    println("the expected t.etaExpand: " + m.pretty)
+    println("weird: when applying etaExpand to the above: " + m.etaExpand.pretty)
+    assert(m.equals(t.etaExpand))
+  }
 }

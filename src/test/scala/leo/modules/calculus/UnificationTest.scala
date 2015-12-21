@@ -6,10 +6,70 @@ import leo.datastructures.impl.Signature
 import scala.collection.immutable.HashMap
 import Term._
 
-/**
- * TOTEST all huets rules
- * TODO create a test suite for the utilities and test them
- */
+class UnificationAuxTestSuite extends LeoTestSuite {
+
+  test("partialBinding(i>(i>i)>i,a:(i>i)>i>i)", Checked) {
+    /* n = 2
+     * m = 2
+     * t = λ i (i>i).a(y1(1,2),y2(1,2)).etaExpand
+     */
+    val s = getFreshSignature
+    val typ = mkAtom(s.addUninterpreted("_1", s.i->:(s.i->:s.i)->:s.i)).ty
+    val a = mkAtom(s.addUninterpreted("a", (s.i->:s.i)->:s.i->:s.i))
+
+    val res = HuetsPreUnification.partialBinding(typ,a)
+
+    val xn = List(Term.mkBound(s.i,1), Term.mkBound(s.i->:s.i,2))
+    val xnTyp = xn.map(_.ty)
+    val ym = List(
+        Term.mkTermApp(Term.mkMetaVar(Type.mkFunType(xnTyp,s.i->:s.i), 1), xn),
+        Term.mkTermApp(Term.mkMetaVar(Type.mkFunType(xnTyp,s.i), 2), xn)
+      )
+    val t = Term.λ(xn.map(_.ty))(Term.mkTermApp(a,ym)).etaExpand
+
+    assert (res.equals(t))
+  }
+
+  test("partialBinding(i>((i>i)>i)>i,a:(((i>i)>i)>i)>(i>i)>>i)", Checked) {
+    /* n = 2
+     * m = 2
+     * t = λ i (i>i>i).a(y1(1,2),y2(1,2)).etaExpand
+     */
+    val s = getFreshSignature
+    val x1 = s.i
+    val x2 = (s.i->:s.i)->:s.i
+    val x3 = s.i
+    val typ = mkAtom(s.addUninterpreted("_1", x1->:x2->:x3)).ty
+    val y1 = ((s.i->:s.i)->:s.i)->:s.i
+    val y2 = s.i->:s.i
+    val y3 = s.i
+    val a = mkAtom(s.addUninterpreted("a", y1->:y2->:y3))
+
+    val res = HuetsPreUnification.partialBinding(typ,a)
+
+    val xn = List(Term.mkBound(x1,1), Term.mkBound(x2,2))
+    val xnTyp = xn.map(_.ty)
+    val ym = List(
+        Term.mkTermApp(Term.mkMetaVar(Type.mkFunType(xnTyp,y1), 3), xn),
+        Term.mkTermApp(Term.mkMetaVar(Type.mkFunType(xnTyp,y2), 4), xn)
+      )
+    val tt = Term.λ(xn.map(_.ty))(Term.mkTermApp(a,ym))
+    println(tt.pretty)
+    val t = tt.etaExpand
+    println(t.pretty)
+
+    println(res.pretty)
+    println(t.pretty)
+
+    assert (res.equals(t))
+  }
+
+
+}
+
+class UnificationRulesTestSuite extends LeoTestSuite {
+}
+
 class UnificationTestSuite extends LeoTestSuite {
 
   //x(a) = f(a,a)
@@ -220,9 +280,7 @@ test("x(f(a,g(f(a,a),a))) = f(a,g(x(f(a,a),a)))", Checked){
     val skX = mkAtom(s.addUninterpreted("skX", (s.i ->: s.o) ->: s.i))
 
     val t1 = mkTermApp(y, Seq(ey))
-    println(t1.pretty +" "+ t1.typeCheck)
     val t2 = Not(mkTermApp(sKf, Seq(mkTermApp(skX, y), ey)))
-    println(t2.pretty + " " + t2.typeCheck)
 
     val result : Iterator[Subst] = HuetsPreUnification.unify(t1,t2).iterator
 
@@ -230,6 +288,24 @@ test("x(f(a,g(f(a,a),a))) = f(a,g(x(f(a,a),a)))", Checked){
       val sb: Subst = result.next
       assert (t1.substitute(sb).betaNormalize.equals(t2.substitute(sb).betaNormalize))
     }
+  }
+
+  // this example should not terminate and should be timed out. It can be dealt with using Tomer's new unification procedure without a timeout.
+  test("sV135 ⋅ (sV2 ⋅ (⊥);⊥) = ~ ⋅ (| ⋅ (sV135 ⋅ (sV2 ⋅ (⊥);⊥);sV136 ⋅ (sV2 ⋅ (⊥);⊥);⊥);⊥)", Checked) {
+    val s = getFreshSignature
+
+    val sV135 = mkFreshMetaVar(s.i ->: s.o)
+    val sV136 = mkFreshMetaVar(s.i ->: s.o)
+    val sV2 = mkFreshMetaVar(s.i)
+
+    val t1 = mkTermApp(sV135, sV2)
+    println(t1.pretty +" "+ t1.typeCheck)
+    val t2 = Not(|||(mkTermApp(sV135, sV2),mkTermApp(sV136,sV2)))
+    println(t2.pretty + " " + t2.typeCheck)
+
+    val result : Iterator[Subst] = HuetsPreUnification.unify(t1,t2).iterator
+
+    assert (result.isEmpty)
   }
 
 }

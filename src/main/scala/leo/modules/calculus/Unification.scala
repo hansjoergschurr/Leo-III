@@ -2,6 +2,7 @@ package leo.modules.calculus
 
 import leo.datastructures.{Term, Type, Subst}
 import leo.modules.output.SZS_EquiSatisfiable
+import com.typesafe.scalalogging.LazyLogging
 
 trait Unification extends CalculusRule {
 
@@ -32,7 +33,7 @@ object IdComparison extends Unification{
  * created on: 15/04/2015
  * author: Tomer Libal
  */
-object HuetsPreUnification extends Unification with com.typesafe.scalalogging.LazyLogging {
+object HuetsPreUnification extends Unification with LazyLogging {
 
   import Term._
   import leo.datastructures.TermFront
@@ -48,6 +49,7 @@ object HuetsPreUnification extends Unification with com.typesafe.scalalogging.La
     val s = s1.etaExpand
 
     // returns a stream whose head is a pre-unifier and whose body computes the next unifiers
+    logger.debug("about to unify: " + t.pretty + " =? " + s.pretty)
     new NDStream[Subst](new MyConfiguration(List(Tuple2(t,s)), List()), MyFun) with BFSAlgorithm
   }
 
@@ -140,33 +142,32 @@ object HuetsPreUnification extends Unification with com.typesafe.scalalogging.La
 //    sub
   }
 
-  // n is arity of variable
-  // m is arity of head
-  // hdSymb is head
-  // y1,..,yn are new bound variable
-  // x1,..,xm are new free variables
+  /**
+   * @param typ the type of the variable
+   * @param hdSymb the rigid head symbol
+   * n      : typ = b_1 -> ... b_n -> c
+   * a      : hdSymb
+   * m      : a.ty = d_1 -> ... -> d_m -> e
+   * @return λx1,..x_n.a(y_1(x_1,..,x_n),..,y_m(x_1,..,x_n)).etaExpand
+   */
   protected[calculus] def partialBinding(typ: Type, hdSymb: Term) = {
-    logger.debug("bindings for typ: " + typ.pretty + " and a: " + hdSymb.pretty + " of type: " + hdSymb.ty.pretty)
-    val ys = typ.funParamTypes.zip(List.range(1,typ.funArity+1)).map(p => Term.mkBound(p._1,p._2))
-    logger.debug("bindings ys: " + ys.map(_.pretty))
-    val xs =
-      if (ys.isEmpty)
+    // xn
+    val xs = typ.funParamTypes.zip(List.range(1,typ.funArity+1)).map(p => Term.mkBound(p._1,p._2))
+    // ym
+    val ys =
+      if (xs.isEmpty)
         hdSymb.ty.funParamTypes.map(p => {
           Term.mkFreshMetaVar(p)
         })
       else {
-        val ysTyp = ys.map(_.ty)
+        val xsTyp = xs.map(_.ty)
         hdSymb.ty.funParamTypes.map(p =>
-          Term.mkTermApp(Term.mkFreshMetaVar(Type.mkFunType(ysTyp,p)), ys)
+          Term.mkTermApp(Term.mkFreshMetaVar(Type.mkFunType(xsTyp,p)), xs)
         )
-
       }
-      logger.debug("bindings xs: " + xs.map(v => v.pretty + " --> " + v.ty.pretty))
-    val t = Term.mkTermApp(hdSymb,xs)
-    logger.debug("bindings t: " + t.pretty)
+    val t = Term.mkTermApp(hdSymb,ys)
 
-    val aterm = Term.λ(ys.map(_.ty))(t)
-    logger.debug("bindings aterm: " + aterm.pretty)
+    val aterm = Term.λ(xs.map(_.ty))(t)
     aterm.etaExpand
   }
 
@@ -186,7 +187,8 @@ object HuetsPreUnification extends Unification with com.typesafe.scalalogging.La
     def apply(e: UEq): UEq = {
       // orienting the equation
       val (t,s) = if (isFlexible(e._1)) (e._1,e._2) else (e._2, e._1)
-      logger.debug("Imitate for var: " + t.headSymbol.pretty + " -- t.hd.ty: "+ t.headSymbol.ty.pretty + " -- s.hd: " + s.headSymbol.pretty + " -- " + t.headSymbol.pretty)
+      // According to Encyclopedia entry about pre-unification:
+      // call partialBinding(y.ty,b)
       val aterm = partialBinding(t.headSymbol.ty,  s.headSymbol)
       (t.headSymbol,aterm)
     }
@@ -212,7 +214,7 @@ object HuetsPreUnification extends Unification with com.typesafe.scalalogging.La
       val (t,s) = if (isFlexible(e._1)) (e._1,e._2) else (e._2, e._1)
       val bvars = t.headSymbol.ty.funParamTypes.zip(List.range(1,t.headSymbol.ty.funArity+1)).map(p => Term.mkBound(p._1,p._2))
       bvars.map(e => {
-        logger.debug("Poject for var: " + t.headSymbol.pretty + " -- t.hd.ty: "+ t.headSymbol.ty.pretty + " -- s.hd: " + e.pretty + " -- " + t.headSymbol.pretty)
+        //logger.debug("Poject for var: " + t.headSymbol.pretty + " -- t.hd.ty: "+ t.headSymbol.ty.pretty + " -- s.hd: " + e.pretty + " -- " + t.headSymbol.pretty)
         val aterm = partialBinding(t.headSymbol.ty, e)
         (t.headSymbol,aterm)
       }
@@ -231,7 +233,7 @@ object HuetsPreUnification extends Unification with com.typesafe.scalalogging.La
     def apply(e: UEq) = {
       // orienting the equation
       val (t,s) = if (isFlexible(e._1)) (e._1,e._2) else (e._2, e._1)
-      logger.debug("Bind: t.hd: "+ t.headSymbol.pretty + " -- s: " + s.pretty)
+      //logger.debug("Bind: t.hd: "+ t.headSymbol.pretty + " -- s: " + s.pretty)
       // getting flexible head
       (t.headSymbol,s)
     }
@@ -319,8 +321,9 @@ object HuetsPreUnification extends Unification with com.typesafe.scalalogging.La
 
       // if uproblems is empty, then succeeds
       if (uproblems.isEmpty) {
-        val conf = new MyConfiguration(Some(computeSubst(sproblems)), if (logger.underlying.isDebugEnabled) Some(conf2) else None)
-        logger.debug("Unifier found\n------------------\n" + conf.toString)
+        // the commented out logging in this section is for keeping track of the whole successfull branch of unification by keeping the parent conf
+        val conf = new MyConfiguration(Some(computeSubst(sproblems)), /*if (logger.underlying.isDebugEnabled) Some(conf2) else*/ None)
+        logger.debug("Unifier found\n------------------\n" + /* conf.toString + "\n" + */ computeSubst(sproblems).pretty)
         List(conf)
       }
       // else consider top equation
@@ -334,8 +337,8 @@ object HuetsPreUnification extends Unification with com.typesafe.scalalogging.La
           // and then compose this subtitution to the one generated by computeSubst
           if (isFlexible(t) && isFlexible(s)) {
             val defSub = computeDefaultSub(uproblems.foldLeft(List[Term]())((ls,e) => e._1.headSymbol::e._2.headSymbol::ls))
-            val conf = new MyConfiguration(Some(defSub.comp(computeSubst(sproblems))), if (logger.underlying.isDebugEnabled) Some(conf2) else None)
-            logger.debug("Pre-unifier found\n------------------\n" + conf.toString)
+            val conf = new MyConfiguration(Some(defSub.comp(computeSubst(sproblems))), /*if (logger.underlying.isDebugEnabled) Some(conf2) else */None)
+            logger.debug("Pre-unifier found\n------------------\n" /*+ conf.toString + "\n"*/ + computeSubst(sproblems).pretty)
             List(conf)
           } else {
 
@@ -343,10 +346,10 @@ object HuetsPreUnification extends Unification with com.typesafe.scalalogging.La
 
             val lb = new ListBuffer[MyConfiguration]
             // compute the imitate partial binding and add the new configuration
-            if (ImitateRule.canApply(t,s)) lb.append(new MyConfiguration(ImitateRule(t,s)+:uproblems, sproblems, if (logger.underlying.isDebugEnabled) Some(conf2) else None))
+            if (ImitateRule.canApply(t,s)) lb.append(new MyConfiguration(ImitateRule(t,s)+:uproblems, sproblems, /*if (logger.underlying.isDebugEnabled) Some(conf2) else*/ None))
 
             // compute all the project partial bindings and add them to the return list
-            ProjectRule(t,s).foreach (e => lb.append(new MyConfiguration(e+:uproblems, sproblems, if (logger.underlying.isDebugEnabled) Some(conf2) else None)))
+            ProjectRule(t,s).foreach (e => lb.append(new MyConfiguration(e+:uproblems, sproblems, /*if (logger.underlying.isDebugEnabled) Some(conf2) else*/ None)))
 
             lb.toList
           }
@@ -371,9 +374,9 @@ package util.executionModels {
   }
 
   //mutable, non deterministic, stream
-  abstract class NDStream[S /*result type*/ ]( val initial: Configuration[S], val myFun: Configuration[S] => Iterable[Configuration[S]] ) extends Iterable[S] with SearchAlgorithm {
+  abstract class NDStream[S /*result type*/ ]( val initial: Configuration[S], val myFun: Configuration[S] => Iterable[Configuration[S]] ) extends Iterable[S] with SearchAlgorithm with LazyLogging {
 
-    protected var MAX_DEPTH : Int = 60  // TODO Load from Configurations
+    protected var MAX_DEPTH : Int = 40 // TODO Load from Configurations
 
     type T = (Configuration[S], Int)  // Configuration and Depth in the search
     private val results: mutable.Queue[S] = new mutable.Queue[S]()
@@ -408,6 +411,7 @@ package util.executionModels {
           } )
           nextVal
         } else {
+          logger.debug("MAX_DEPTH reached for " + conf.toString)
           None
         }
       }

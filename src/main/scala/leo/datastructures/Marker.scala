@@ -132,6 +132,8 @@ case class AnnotatedClause(id: Long, cl: Clause, role: Role, annotation: ClauseA
   import leo.Configuration
   override def compare(that: AnnotatedClause) = Configuration.CLAUSE_ORDERING.compare(this.cl, that.cl)
   override def hashCode(): Int = cl.hashCode()  // TODO: Does this make sense?
+
+  var additionalInformation: Option[AnyRef] = None
 }
 
 object AnnotatedClause {

@@ -12,66 +12,71 @@ import scala.collection.SortedSet
 object constantExtraction {
 
   /* TODO:
-    - Not unifiable test
-    - Search (double iteration!)
-      - is pure: doesn't unify with any literal of opposite polarity
-    - return list of pure literals (for now)
+      - fix bug!
+      - extend to equational literals
+      - delete clauses containing pure literals
    */
   def pureLiterals(clauses : SortedSet[AnnotatedClause]) : Set[AnnotatedClause] = {
     val testSet : List[List[(Literal, Boolean)]] = clauses.map((_).cl.map(l => (l, !l.equational)).toList).toList
 
     type LiteralP = (Literal, Boolean)
-    type Matrix = List[List[LiteralP]]
 
-    def testClause(c1: List[LiteralP], c2: List[LiteralP]) : (List[LiteralP], List[LiteralP]) = {
-      val ch :: cs = c1
+    def testClause(c1p: AnyRef, c2p: AnyRef) : (Seq[LiteralP], Seq[LiteralP]) = {
+      val c1 = c1p.asInstanceOf[Seq[LiteralP]]
+      var c2 = c2p.asInstanceOf[Seq[LiteralP]]
 
-      def scanner(t: (LiteralP, List[LiteralP]), lit: LiteralP): (LiteralP, List[LiteralP]) = t match {
-        case (_, c2) =>
-          var (l1,p1) = lit
-          val c2n = for((l2,p2) <- c2) yield {
+      def loop(x: LiteralP): LiteralP = {
+        var (l1, p1) = x
+        c2 = c2.map {
+          case (l2, p2) =>
             // TODO: Extend to equational literals
             if (l1.polarity != l2.polarity &&
               !l1.equational && !l2.equational
               && mayUnify(l1.left, l2.left)) {
               p1 = false
+              Out.debug(s"Found counter ex.: ${l1.pretty}, ${l2.pretty}")
               (l2, false)
             }
             else
-              (l2,p2)
-          }
-          ((l1,p1), c2n)
+              (l2, p2)
+        }
+        (l1, p1)
       }
 
-      val s = cs.scanLeft((ch,c2))(scanner)
-      (s.map(_._1), s.last._2)
+      val c1n = c1.map(loop(_))
+
+      (c1n, c2)
     }
 
-    def search(accu : (List[LiteralP], Matrix), c2: List[LiteralP]) =
-      accu match {
-        case (c1, accuM) =>
-          val (nC1, nC2) = testClause(c1, c2)
-          (nC1, nC2::accuM)
-      }
+    Out.debug(s"### Pure literal detection.")
 
-    def test(matrix : Matrix) : Matrix =
-      matrix match {
-        case c :: cs =>
-          val(resC, newMatrix) = cs.foldLeft((c, cs))(search)
-          resC::test(newMatrix)
-        case _  => List()
+    clauses.foreach(c => c.additionalInformation = Some(c.cl.map(l => (l, !l.equational))))
+    var c = clauses.head.additionalInformation.get
+    var cs = clauses.tail
+
+    while(!cs.isEmpty) {
+      Out.debug(s"Iterations left: ${cs.size}")
+      cs.foreach(c2 => {
+        val (c1p, c2p) = testClause(c,c2.additionalInformation.get);
+        c2.additionalInformation = Some(c2p)
+        c=c1p;
+      })
+
+      c = cs.head.additionalInformation.get
+      cs = cs.tail
     }
 
-    Out.debug(s"### Pure literal dedection.")
-
-    val pur = test(testSet)
+    val pur = clauses.flatMap(c => c.additionalInformation.get.asInstanceOf[Seq[LiteralP]].filter(_._2))
 
     for (c <- clauses) {
       Out.debug(s"## Got: ${c.pretty}")
     }
-    for(c <- pur; (l, p) <- c; if p)
-      Out.debug(s"## Pure: ${l.pretty}")
-
+    for(c <- pur) {
+      val (l, p) = c
+      if(p)
+        Out.debug(s"## Pure: ${l.pretty}")
+    }
+    assert(false)
     Set.empty
   }
 }

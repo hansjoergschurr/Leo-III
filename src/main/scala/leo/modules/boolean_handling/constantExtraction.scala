@@ -12,12 +12,12 @@ import scala.collection.SortedSet
 object constantExtraction {
 
   /* TODO:
-      - fix bug!
       - extend to equational literals
       - delete clauses containing pure literals
+      - unit tests
    */
   def pureLiterals(clauses : SortedSet[AnnotatedClause]) : Set[AnnotatedClause] = {
-    val testSet : List[List[(Literal, Boolean)]] = clauses.map((_).cl.map(l => (l, !l.equational)).toList).toList
+    val testSet : List[List[(Literal, Boolean)]] = clauses.map(_.cl.map(l => (l, !l.equational)).toList).toList
 
     type LiteralP = (Literal, Boolean)
 
@@ -30,7 +30,7 @@ object constantExtraction {
         c2 = c2.map {
           case (l2, p2) =>
             // TODO: Extend to equational literals
-            if (l1.polarity != l2.polarity &&
+            if ((l1.polarity != l2.polarity) &&
               !l1.equational && !l2.equational
               && mayUnify(l1.left, l2.left)) {
               p1 = false
@@ -51,18 +51,18 @@ object constantExtraction {
     Out.debug(s"### Pure literal detection.")
 
     clauses.foreach(c => c.additionalInformation = Some(c.cl.map(l => (l, !l.equational))))
-    var c = clauses.head.additionalInformation.get
+    var c = clauses.head
     var cs = clauses.tail
 
-    while(!cs.isEmpty) {
+    while(cs.nonEmpty) {
       Out.debug(s"Iterations left: ${cs.size}")
       cs.foreach(c2 => {
-        val (c1p, c2p) = testClause(c,c2.additionalInformation.get);
+        val (c1p, c2p) = testClause(c.additionalInformation.get,c2.additionalInformation.get)
         c2.additionalInformation = Some(c2p)
-        c=c1p;
+        c.additionalInformation = Some(c1p)
       })
 
-      c = cs.head.additionalInformation.get
+      c = cs.head
       cs = cs.tail
     }
 

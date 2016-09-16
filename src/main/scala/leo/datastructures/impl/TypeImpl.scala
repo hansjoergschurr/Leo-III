@@ -3,43 +3,50 @@ package leo.datastructures.impl
 import leo.datastructures.{Kind, Subst, Type}
 
 /** Literal type, i.e. `$o` */
-protected[datastructures] case class BaseTypeNode(id: Signature#Key) extends Type {
+protected[datastructures] case class GroundTypeNode(id: Signature#Key, args: Seq[Type]) extends Type {
   // Pretty printing
   import Signature.{get => signature}
-  def pretty = signature.meta(id).name
+  lazy val pretty = {
+    if (args.isEmpty)
+      signature.meta(id).name
+    else
+      signature.meta(id).name +"(" + args.map(_.pretty).mkString(",") + ")"
+  }
 
   // Predicates on types
-  override val isBaseType         = true
+  override val isBaseType         = args.isEmpty
   def isApplicableWith(arg: Type) = false
 
   // Queries on types
-  val typeVars = Set[Type]()
+  val typeVars = args.flatMap(_.typeVars).toSet
   val symbols = Set(id)
 
-  val funDomainType   = None
-  val codomainType = this
-  val arity = 0
+  val funDomainType = None
+  val codomainType  = this
+  val arity         = 0
   val funParamTypesWithResultType = Seq(this)
-  val order = 0
+  val order         = 0
   val polyPrefixArgsCount = 0
 
   val scopeNumber = 0
 
+  def app(ty: Type): Type = GroundTypeNode(id, args :+ ty)
+
   def occurs(ty: Type) = ty match {
-    case BaseTypeNode(key) if key == id => true
-    case _                              => false
+    case GroundTypeNode(key, args2) if key == id => args == args2
+    case _ => args.exists(_.occurs(ty))
   }
 
   // Substitutions
-  def substitute(what: Type, by: Type) = what match {
-    case BaseTypeNode(key) if key == id => by
-    case _ => this
+  def substitute(what: Type, by: Type) = {
+    if (what == this) by
+    else GroundTypeNode(id, args.map(_.substitute(what, by)))
   }
-  def substitute(subst: Subst) = this
+  def substitute(subst: Subst) = GroundTypeNode(id, args.map(_.substitute(subst)))
   def instantiate(by: Type) = this
 
   // Other operations
-  def foldRight[A](baseFunc: Signature#Key => A)
+  def foldRight[A](baseFunc: Signature#Key => A) // FIXME
                   (boundFunc: Int => A)
                   (absFunc: (A,A) => A)
                   (prodFunc: (A,A) => A)
@@ -70,6 +77,8 @@ protected[datastructures] case class BoundTypeNode(scope: Int) extends Type {
   val polyPrefixArgsCount = 0
 
   val scopeNumber = -scope
+
+  def app(ty: Type): Type = throw new IllegalArgumentException("Typed applied to type variable")
 
   def occurs(ty: Type) = false
 
@@ -124,6 +133,8 @@ protected[datastructures] case class AbstractionTypeNode(in: Type, out: Type) ex
 
   val scopeNumber = Math.min(in.scopeNumber, out.scopeNumber)
 
+  def app(ty: Type): Type = throw new IllegalArgumentException("Typed applied to abstraction type")
+
   def occurs(ty: Type) = in.occurs(ty) || out.occurs(ty)
 
   // Substitutions
@@ -163,6 +174,8 @@ protected[datastructures] case class ProductTypeNode(l: Type, r: Type) extends T
   val polyPrefixArgsCount = 0
 
   val scopeNumber = Math.min(l.scopeNumber, r.scopeNumber)
+
+  def app(ty: Type): Type = throw new IllegalArgumentException("Typed applied to product type")
 
   def occurs(ty: Type) = l.occurs(ty) || r.occurs(ty)
 
@@ -205,6 +218,8 @@ protected[datastructures] case class UnionTypeNode(l: Type, r: Type) extends Typ
   val polyPrefixArgsCount = 0
 
   val scopeNumber = Math.min(l.scopeNumber, r.scopeNumber)
+
+  def app(ty: Type): Type = throw new IllegalArgumentException("Typed applied to union type")
 
   def occurs(ty: Type) = l.occurs(ty) || r.occurs(ty)
 
@@ -253,6 +268,8 @@ protected[datastructures] case class ForallTypeNode(body: Type) extends Type {
 
   val scopeNumber = body.scopeNumber + 1
 
+  def app(ty: Type): Type = throw new IllegalArgumentException("Typed applied to type abstraction") //TODO: refine, since its basically beta reduction
+
   def occurs(ty: Type) = body.occurs(ty)
 
   // Substitutions
@@ -289,7 +306,20 @@ protected[datastructures] case object TypeKind extends Kind {
   val isTypeKind = true
   val isSuperKind = false
   val isFunKind = false
+
+  val arity = 0
 }
+
+protected[datastructures] case class FunKind(from: Kind, to: Kind) extends Kind {
+  def pretty = from.pretty + " > " + to.pretty
+
+  val isTypeKind = false
+  val isSuperKind = false
+  val isFunKind = true
+
+  lazy val arity = 1 + to.arity
+}
+
 /** Artificial kind that models the type of `*` (i.e. []) */
 protected[datastructures] case object SuperKind extends Kind {
   def pretty = "#"
@@ -297,6 +327,8 @@ protected[datastructures] case object SuperKind extends Kind {
   val isTypeKind = false
   val isSuperKind = true
   val isFunKind = false
+
+  val arity = 0
 }
 
 

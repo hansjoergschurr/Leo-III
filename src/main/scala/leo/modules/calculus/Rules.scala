@@ -45,7 +45,7 @@ object FuncExt extends CalculusRule {
       val newVars = funArgTys.map {case ty => vargen(ty)}
       Literal(Term.mkTermApp(lit.left, newVars).betaNormalize, Term.mkTermApp(lit.right, newVars).betaNormalize, true)
     } else {
-      val skTerms = funArgTys.map(leo.modules.calculus.skTerm(_, initFV)) //initFV: We only use the
+      val skTerms = funArgTys.map(leo.modules.calculus.skTerm(_, initFV, vargen.existingTyVars)) //initFV: We only use the
       // free vars that were existent at the very beginning, i.e. simulating
       // that we applies func_ext to all negative literals first
       // in order to minimize the FVs inside the sk-term
@@ -62,7 +62,7 @@ object FuncExt extends CalculusRule {
 
 object BoolExt extends CalculusRule {
   val name = "bool_ext"
-  override val inferenceStatus = Some(SZS_EquiSatisfiable)
+  override val inferenceStatus = Some(SZS_Theorem)
 
   def canApply(l: Literal): Boolean = l.equational && l.left.ty == Signature.get.o
   type ExtLits = Seq[Literal]
@@ -143,11 +143,11 @@ object PreUni extends CalculusRule {
     val result = HuetsPreUnification.unifyAll(vargen, uniLits).iterator
     if (result.hasNext) {
       val uniResult = result.next()
-      val subst = uniResult._1
+      val (termSubst, typeSubst) = uniResult._1
       val flexflexPairs = uniResult._2
-      val newLiterals = flexflexPairs.map(eq => Literal.mkNeg(eq._1, eq._2))
-      val updatedOtherLits = otherLits.map(_.substitute(subst))
-      Set((Clause(updatedOtherLits ++ newLiterals),subst))
+      val newLiterals = flexflexPairs.map(eq => Literal.mkNeg(eq._1, eq._2)) // TODO DO they need to be substituted also?
+      val updatedOtherLits = otherLits.map(_.substitute(termSubst, typeSubst))
+      Set((Clause(updatedOtherLits ++ newLiterals),termSubst))
     } else {
       Set()
       //Set((cl, Subst.id))
@@ -270,18 +270,19 @@ object OrderedParamod extends CalculusRule {
     Out.finest(s"withLits_without_withLiteral: \n\t${(withLits_without_withLiteral).map(_.pretty).mkString("\n\t")}")
 
     /* We shift all lits from intoClause to make the universally quantified variables distinct from those of withClause. */
-    val shiftedIntoLits = intoClause.lits.map(_.substitute(Subst.shift(withClause.maxImplicitlyBound))) // TOFIX reordering done
+    val withMaxTyVar = if (withClause.typeVars.isEmpty) 0 else withClause.typeVars.max
+    val shiftedIntoLits = intoClause.lits.map(_.substitute(Subst.shift(withClause.maxImplicitlyBound), Subst.shift(withMaxTyVar))) // TOFIX reordering done
     Out.finest(s"IntoLits: ${intoClause.lits.map(_.pretty).mkString("\n\t")}")
     Out.finest(s"shiftedIntoLits: ${shiftedIntoLits.map(_.pretty).mkString("\n\t")}")
 
     // val intoLiteral = shiftedIntoLits(intoIndex) // FIXME Avoid reordering
     val intoLiteral = intoClause.lits(intoIndex)
     val (findWithin, otherSide) = if (intoSide == Literal.leftSide)
-      (intoLiteral.left.substitute(Subst.shift(withClause.maxImplicitlyBound)),
-        intoLiteral.right.substitute(Subst.shift(withClause.maxImplicitlyBound)))
+      (intoLiteral.left.substitute(Subst.shift(withClause.maxImplicitlyBound), Subst.shift(withMaxTyVar)),
+        intoLiteral.right.substitute(Subst.shift(withClause.maxImplicitlyBound), Subst.shift(withMaxTyVar)))
     else
-      (intoLiteral.right.substitute(Subst.shift(withClause.maxImplicitlyBound)),
-        intoLiteral.left.substitute(Subst.shift(withClause.maxImplicitlyBound)))
+      (intoLiteral.right.substitute(Subst.shift(withClause.maxImplicitlyBound), Subst.shift(withMaxTyVar)),
+        intoLiteral.left.substitute(Subst.shift(withClause.maxImplicitlyBound), Subst.shift(withMaxTyVar)))
 
 
     Out.finest(s"findWithin: ${findWithin.pretty}")
@@ -294,7 +295,7 @@ object OrderedParamod extends CalculusRule {
     Out.finest(s"withClause.maxImpBound: ${withClause.maxImplicitlyBound}")
     Out.finest(s"intoSubterm: ${intoSubterm.pretty}")
     Out.finest(s"shiftedIntoSubterm: ${intoSubterm.substitute(Subst.shift(withClause.maxImplicitlyBound)).pretty}")
-    val unificationLit = Literal.mkNeg(toFind, intoSubterm.substitute(Subst.shift(withClause.maxImplicitlyBound-intoPosition.abstractionCount)))
+    val unificationLit = Literal.mkNeg(toFind, intoSubterm.substitute(Subst.shift(withClause.maxImplicitlyBound-intoPosition.abstractionCount), Subst.shift(withMaxTyVar)))
 
     Out.finest(s"unificationLit: ${unificationLit.pretty}")
 

@@ -134,6 +134,7 @@ package inferenceControl {
         val intoConfigurationIt = intoConfigurationIterator(intoClause)
         while (intoConfigurationIt.hasNext) {
           val (intoIndex, intoLit, intoSide, intoPos, intoTerm) = intoConfigurationIt.next()
+          leo.Out.finest(s"check with ${withTerm.pretty}, into: ${intoTerm.pretty}: ${leo.modules.calculus.mayUnify(withTerm, intoTerm)}")
           assert(!intoLit.flexflex)
           if (intoPos == Position.root &&
             ((intoClause.id == withClause.id && intoIndex == withIndex) ||
@@ -360,7 +361,7 @@ package inferenceControl {
         uniClauses.foreach { case (cw, ul, ol) =>
           Out.debug(s"Unification task from clause ${cw.pretty}")
           Out.debug(s"Free vars: ${cw.cl.implicitlyBound.toString}")
-          val nc = PreUni(leo.modules.calculus.freshVarGen(cw.cl), cw.cl, ul, ol).map{case (cl,subst) => AnnotatedClause(cl, InferredFrom(PreUni, Set((cw, ToTPTP(subst)))), cw.properties | ClauseAnnotation.PropUnified)}
+          val nc = PreUni(leo.modules.calculus.freshVarGen(cw.cl), cw.cl, ul, ol).map{case (cl,subst) => AnnotatedClause(cl, InferredFrom(PreUni, Set((cw, ToTPTP(subst, cw.cl.implicitlyBound)))), cw.properties | ClauseAnnotation.PropUnified)}
           Out.trace(s"Uni result:\n\t${nc.map(_.pretty).mkString("\n\t")}")
           resultSet = resultSet union nc
         }
@@ -378,7 +379,7 @@ package inferenceControl {
           Out.debug(s"Clause ${cl.id} needs unification. Working on it ...")
           assert(cl.annotation.fromRule.isDefined)
           val fromRule = cl.annotation.fromRule.get
-          if (fromRule == OrderedParamod || fromRule == OrderedEqFac) {
+          if (fromRule == OrderedParamod || fromRule == OrderedEqFac) { // FIXME: No direct inheritance
             val unificationLit = cl.cl.lits.last
             if (unificationLit.uni) {
               assert(unificationLit.equational && !unificationLit.polarity)
@@ -388,12 +389,12 @@ package inferenceControl {
                 val (ca, ul, ol) = PreUni.canApply(res)
                 if (ca) {
                   PreUni(leo.modules.calculus.freshVarGen(res), res, ul, ol).map {
-                    case (a,b) => AnnotatedClause(a, InferredFrom(PreUni, Set((cl, ToTPTP(b)))), leo.datastructures.deleteProp(ClauseAnnotation.PropNeedsUnification,cl.properties | ClauseAnnotation.PropUnified))
+                    case (a,b) => AnnotatedClause(a, InferredFrom(PreUni, Set((cl, ToTPTP(b, cl.cl.implicitlyBound)))), leo.datastructures.deleteProp(ClauseAnnotation.PropNeedsUnification,cl.properties | ClauseAnnotation.PropUnified))
 
-                  } + AnnotatedClause(res, InferredFrom(PreUni, Set((cl, ToTPTP(subst)))),
+                  } + AnnotatedClause(res, InferredFrom(PreUni, Set((cl, ToTPTP(subst, cl.cl.implicitlyBound)))),
                     leo.datastructures.deleteProp(ClauseAnnotation.PropNeedsUnification,cl.properties | ClauseAnnotation.PropUnified))
                 } else
-                  Set(AnnotatedClause(res, InferredFrom(PreUni, Set((cl, ToTPTP(subst)))), leo.datastructures.deleteProp(ClauseAnnotation.PropNeedsUnification,cl.properties | ClauseAnnotation.PropUnified)))
+                  Set(AnnotatedClause(res, InferredFrom(PreUni, Set((cl, ToTPTP(subst, cl.cl.implicitlyBound)))), leo.datastructures.deleteProp(ClauseAnnotation.PropNeedsUnification,cl.properties | ClauseAnnotation.PropUnified)))
               }
               Out.trace(s"Uni result:\n\t${results.map(_.pretty).mkString("\n\t")}")
               resultSet = resultSet union results
@@ -403,7 +404,7 @@ package inferenceControl {
             if (ca) {
               val nc = PreUni(leo.modules.calculus.freshVarGen(cl.cl), cl.cl, ul, ol)
               val result = if (nc.isEmpty) Set(cl) else nc.map {
-                case (a,b) => AnnotatedClause(a, InferredFrom(PreUni, Set((cl, ToTPTP(b)))), leo.datastructures.deleteProp(ClauseAnnotation.PropNeedsUnification,cl.properties | ClauseAnnotation.PropUnified))
+                case (a,b) => AnnotatedClause(a, InferredFrom(PreUni, Set((cl, ToTPTP(b, cl.cl.implicitlyBound)))), leo.datastructures.deleteProp(ClauseAnnotation.PropNeedsUnification,cl.properties | ClauseAnnotation.PropUnified))
               }
               resultSet = resultSet union result
             }
@@ -477,7 +478,7 @@ package inferenceControl {
         val new_ps_pre3 = ps_vars.flatMap(h => PrimSubst(cw.cl, ps_vars, specialEqBindings(cw.cl.implicitlyBound.map(a => Term.mkBound(a._2, a._1)).toSet, h.ty.funParamTypes)))
         val new_ps_pre4 = ps_vars.flatMap(h => PrimSubst(cw.cl, ps_vars, specialEqBindings(Signature.get.uninterpretedSymbols.map(Term.mkAtom(_)), h.ty.funParamTypes)))
         val pre = new_ps_pre //++ new_ps_pre2 ++ new_ps_pre3 ++ new_ps_pre4
-        val new_ps = pre.map{case (cl,subst) => AnnotatedClause(cl, InferredFrom(PrimSubst, Set((cw,ToTPTP(subst)))), cw.properties)}
+        val new_ps = pre.map{case (cl,subst) => AnnotatedClause(cl, InferredFrom(PrimSubst, Set((cw,ToTPTP(subst, cw.cl.implicitlyBound)))), cw.properties)}
         Out.trace(s"Prim subst result:\n\t${new_ps.map(_.pretty).mkString("\n\t")}")
         return new_ps
       }
@@ -717,7 +718,7 @@ package inferenceControl {
       if (cA_leibniz) {
         Out.trace(s"Replace Leibniz equalities in ${cl.id}")
         val (resCl, subst) = ReplaceLeibnizEq(cl.cl, leibTermMap)
-        val res = AnnotatedClause(resCl, InferredFrom(ReplaceLeibnizEq, Set((cl, ToTPTP(subst)))), cl.properties | ClauseAnnotation.PropNeedsUnification)
+        val res = AnnotatedClause(resCl, InferredFrom(ReplaceLeibnizEq, Set((cl, ToTPTP(subst, cl.cl.implicitlyBound)))), cl.properties | ClauseAnnotation.PropNeedsUnification)
         Out.finest(s"Result: ${res.pretty}")
         res
       } else
@@ -739,7 +740,7 @@ package inferenceControl {
       if (cA_Andrews) {
         Out.trace(s"Replace Andrews equalities in ${cl.id}")
         val (resCl, subst) = ReplaceAndrewsEq(cl.cl, andrewsTermMap)
-        val res = AnnotatedClause(resCl, InferredFrom(ReplaceAndrewsEq, Set((cl, ToTPTP(subst)))), cl.properties | ClauseAnnotation.PropNeedsUnification)
+        val res = AnnotatedClause(resCl, InferredFrom(ReplaceAndrewsEq, Set((cl, ToTPTP(subst, cl.cl.implicitlyBound)))), cl.properties | ClauseAnnotation.PropNeedsUnification)
         Out.finest(s"Result: ${res.pretty}")
         res
       } else
@@ -979,7 +980,7 @@ package  externalProverControl {
         }
       }
       val submitClauses: Set[AnnotatedClause] = modifyClauses + AnnotatedClause(Clause(Literal(LitFalse(), true)), Role_Conjecture, NoAnnotation, ClauseAnnotation.PropNoProp)
-      val send = ToTPTP(submitClauses).map(_.output)
+      val send = ToTPTP(submitClauses).map(_.apply)
       Out.finest(s"LEO input:")
       Out.finest(s"${send.mkString("\n")}")
       Out.finest("LEO INPUT END")

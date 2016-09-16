@@ -30,6 +30,7 @@ abstract class Type extends Pretty {
 
   // Predicates on types
   val isBaseType: Boolean = false
+  val isComposedType: Boolean = false
   val isFunType: Boolean = false
   val isProdType: Boolean = false
   val isUnionType: Boolean = false
@@ -47,6 +48,7 @@ abstract class Type extends Pretty {
   def arity: Int
   def funParamTypesWithResultType: Seq[Type]
   def funParamTypes: Seq[Type] = funParamTypesWithResultType.init
+  def splitFunParamTypesAt(n: Int): (Seq[Type], Type)
 
   def scopeNumber: Int
 
@@ -99,6 +101,9 @@ abstract class Type extends Pretty {
    * @return
    */
   def polyPrefixArgsCount: Int
+  /* Return the body of the type without any prefix-type abstractions, e.g.
+  * for /\./\. c 1 2 return (c 1 2). */
+  def monomorphicBody: Type
 
   protected[datastructures] def closure(subst: Subst): Type
 }

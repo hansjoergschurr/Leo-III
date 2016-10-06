@@ -9,6 +9,10 @@ node {
 
     stage 'Build'
 
+    env.JAVA_HOME = tool name: 'Java 8', type: 'jdk'
+    env.PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
+    echo "JAVA_HOME is: ${env.JAVA_HOME}"
+
     sh "sbt compile"
     sh "sbt nativeCompile"
 

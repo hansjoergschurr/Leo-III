@@ -7,6 +7,7 @@ import leo.datastructures.{Clause, ClauseAnnotation, AnnotatedClause, Literal, R
 import ClauseAnnotation._
 import leo.modules.output._
 import leo.modules.{Parsing, SZSException, SZSOutput, Utility}
+import leo.modules.boolean_handling.satBasedUnitClause
 
 
 /**
@@ -46,6 +47,8 @@ object SeqPProc extends Function1[Long, Unit]{
       result = Control.acSimp(result)
       Control.simp(result)
     }
+
+    satBasedUnitClause.findUnitClauses(result)
     // Pre-unify new clauses
     result = result union Control.preunifySet(result)
     result = result.filterNot(cw => Clause.trivial(cw.cl))

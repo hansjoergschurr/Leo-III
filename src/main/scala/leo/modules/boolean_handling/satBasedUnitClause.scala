@@ -4,8 +4,8 @@ import leo.datastructures.{AnnotatedClause, Literal, Term}
 import leo.modules.output.logger.Out
 import leo.modules.sat_solver.PicoSAT
 
-import scala.collection.SortedSet
 import scala.collection.mutable.HashMap
+import scala.collection.mutable.Set
 
 /**
   * Created by Hans-Jörg Schurr  on 10/10/16.
@@ -23,7 +23,7 @@ object satBasedUnitClause {
     * @param clauses the matrix
     * @return a set of new unit clauses
     */
-  def findUnitClauses(clauses : Set[AnnotatedClause]) : Set[AnnotatedClause] = {
+  def findUnitClauses(clauses : scala.collection.immutable.Set[AnnotatedClause]) : scala.collection.immutable.Set[AnnotatedClause] = {
     Out.debug(s"### SAT based implied literals.")
     var literalMap : HashMap[(Term,Term), Int] = HashMap();
     val solver = PicoSAT(true);
@@ -43,6 +43,7 @@ object satBasedUnitClause {
                           sat_clause = sat_polarity(fresh, l) :: sat_clause
         }
       }
+      Out.trace{s"Added: ${sat_clause}."}
       solver.addClause(sat_clause)
 
       c = cs.head
@@ -51,30 +52,50 @@ object satBasedUnitClause {
 
     Out.debug(s"SAT size:\tVars: ${solver.numVariables} Clauses: ${solver.numAddedClauses}")
 
-
+    // Output helpers
     val inverseMap = literalMap.map(_.swap)
-    def debugOut(v:Int, pol: Boolean = true) = {
-      val Some((l,r)) = inverseMap get v
-      val s = pol match {case true => "=="; case false => "!="}
+    def debugOut(v:Int) = {
+      val Some((l,r)) = inverseMap get v.abs
+      val s = v > 0 match {case true => "=="; case false => "!="}
       Out.debug(s"Deduced: ${l.pretty} ${s} ${r.pretty}")
     }
 
-    for (v <- literalMap.valuesIterator) {
-      solver.assume(v)
-      solver.solve()
-      if (solver.state == PicoSAT.UNSAT) debugOut(v:Int)
-      solver.assume(-v)
-      solver.solve()
-      if (solver.state == PicoSAT.UNSAT) debugOut(v:Int, false)
-
+    val satLiteralSet = Set[Int]()
+    if(solver.solve() == PicoSAT.SAT){
+      for(v <- literalMap.values) {
+        solver.getAssignment(v) match {
+          case Some(true) => satLiteralSet.add(-v)
+          case Some(false) => satLiteralSet.add(v)
+          case None => ;
+        }
+      }
     }
-    // wieso == und !=?
+    else if(solver.solve() == PicoSAT.UNSAT) {
+      Out.debug(s"Base SAT problem UNSAT. Input clauses contradictory.")
+      assert(false)
+    }
+    else {
+      Out.debug(s"Base SAT problem undecided.")
+      assert(false)
+    }
+
+    while (satLiteralSet.nonEmpty) {
+      val v = satLiteralSet.head
+      satLiteralSet.remove(v)
+      Out.trace{s"Testing ${v}."}
+
+      solver.assume(v)
+      if (solver.solve() == PicoSAT.UNSAT) debugOut(v:Int)
+      else if (solver.solve() == PicoSAT.SAT) {
+        satLiteralSet.retain(solver.getAssignment(_).contains(false))
+      }
+    }
     // additions: use decidable unification to add clause
     //    ideas: collect patterns during first iteration
     //            sample clauses containing patterns
     //            use those to create additional clauses
     // Algorithm from An AIG-Based QBF-Solver Using SAT for Preprocessing
     assert(false)
-    Set.empty
+    scala.collection.immutable.Set.empty
   }
 }

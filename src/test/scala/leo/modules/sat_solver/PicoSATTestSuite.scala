@@ -113,6 +113,7 @@ class PicoSATTestSuite extends LeoTestSuite{
     context.solve()
 
     assert(context.getAssignment(1) == Some(false))
+    assert(context.getAssignment(-1) == Some(true))
     assert(context.getAssignment(2) == Some(false))
     assert(context.getAssignment(3) == Some(true))
     assertResult(Some(true))(context.getAssignmentToplevel(3))
@@ -146,6 +147,21 @@ class PicoSATTestSuite extends LeoTestSuite{
     assertResult(context.failedAssumptions)(Array(1,2))
 
     println("Test success: Assumtions.")
+  }
+
+  test("Assummtions switch polarity", Checked) {
+    val context = PicoSAT(true)
+    loadSatProblem(context)
+    context.addClause(1)
+
+    context.assume(2)
+    assertResult(context.solve())(PicoSAT.UNSAT)
+    assertResult(context.state)(PicoSAT.UNSAT)
+
+    context.assume(-2)
+    assertResult(context.solve())(PicoSAT.SAT)
+    assertResult(context.state)(PicoSAT.SAT)
+
   }
 
   test("Changed", Checked) {

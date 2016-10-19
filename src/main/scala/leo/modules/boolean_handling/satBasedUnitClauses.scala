@@ -10,7 +10,7 @@ import scala.collection.mutable.Set
 /**
   * Created by Hans-Jörg Schurr  on 10/10/16.
   */
-object satBasedUnitClause {
+object satBasedUnitClauses {
 
   private def sat_polarity(sat_lit : Int, literal : Literal) =
     literal.polarity match {
@@ -19,12 +19,12 @@ object satBasedUnitClause {
     }
 
   /***
-    * Uses a SAT solver to find unit clauses implied by the matrix
+    * Uses a SAT solver to find unit clauses implied by the matrix.
     * @param clauses the matrix
     * @return a set of new unit clauses
     */
   def findUnitClauses(clauses : scala.collection.immutable.Set[AnnotatedClause]) : scala.collection.immutable.Set[AnnotatedClause] = {
-    Out.debug(s"### SAT based implied literals.")
+    Out.debug(s"### SAT based unit clauses.")
     var literalMap : HashMap[(Term,Term), Int] = HashMap();
     val solver = PicoSAT(true);
 
@@ -43,14 +43,14 @@ object satBasedUnitClause {
                           sat_clause = sat_polarity(fresh, l) :: sat_clause
         }
       }
-      Out.trace{s"Added: ${sat_clause}."}
+      Out.trace{s"Added to SAT problem: ${sat_clause}."}
       solver.addClause(sat_clause)
 
       c = cs.head
       cs = cs.tail
     }
 
-    Out.debug(s"SAT size:\tVars: ${solver.numVariables} Clauses: ${solver.numAddedClauses}")
+    Out.debug(s"SAT problem size:\tVars: ${solver.numVariables} Clauses: ${solver.numAddedClauses}")
 
     // Output helpers
     val inverseMap = literalMap.map(_.swap)
@@ -65,7 +65,9 @@ object satBasedUnitClause {
       for(v <- literalMap.values) {
         solver.getAssignment(v) match {
           case Some(true) => satLiteralSet.add(-v)
+            solver.setDefaultPhase(v, -1) // facilitates the removal of variables to check
           case Some(false) => satLiteralSet.add(v)
+            solver.setDefaultPhase(v, 1)
           case None => ;
         }
       }
@@ -79,18 +81,22 @@ object satBasedUnitClause {
       assert(false)
     }
 
+    Out.trace(s"Vars to test after first model: ${satLiteralSet.size}")
+
     while (satLiteralSet.nonEmpty) {
       val v = satLiteralSet.head
       satLiteralSet.remove(v)
       Out.trace{s"Testing ${v}."}
 
       solver.assume(v)
-      if (solver.solve() == PicoSAT.UNSAT) debugOut(v:Int)
+      if (solver.solve() == PicoSAT.UNSAT) debugOut(-v:Int)
       else if (solver.solve() == PicoSAT.SAT) {
         satLiteralSet.retain(solver.getAssignment(_).contains(false))
       }
+      Out.trace(s"Vars to test: ${satLiteralSet.size}")
     }
     // additions: use decidable unification to add clause
+    //            add equality consts: a=b /\ b = c => a =c
     //    ideas: collect patterns during first iteration
     //            sample clauses containing patterns
     //            use those to create additional clauses

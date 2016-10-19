@@ -75,6 +75,7 @@ class PicoSATTestSuite extends LeoTestSuite{
     loadSatProblem(context)
     context.setGlobalDefaultPhase(3)
     context.setDefaultPhase(1, -3)
+    context.setDefaultPhase(-1, 3)
     context.setMoreImportant(1)
     context.setLessImportant(3)
     assert(context.solve() == PicoSAT.SAT)

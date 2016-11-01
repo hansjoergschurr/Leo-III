@@ -1,4 +1,5 @@
 #!groovy
+
 node {
     stage 'Checkout'
 
@@ -16,8 +17,19 @@ node {
     sh "sbt compile"
     sh "sbt nativeCompile"
 
-    stage 'Run'
+    stage 'Run & Archive'
 
     sh "sbt run"
+
+    sh "sbt assembly"
+    archiveArtifacts artifacts: '**/target/*assembly*.jar', fingerprint: true
+
+    stage 'Tests'
+
+    sh "sbt test || true"
+    step([$class: 'JUnitResultArchiver', testResults: 'target/test-reports/*.xml', fingerprint: true])
+
+
+    stage 'Small Benchmark'
 
 }

@@ -48,8 +48,11 @@ are used to compile PicoSAT and should therefor be present too.
 First download PicoSAT version 965 from the
 [PicoSAT homepage](http://fmv.jku.at/picosat/) and
 extract the archive into `./src/native/` creating a folder
-`./src/native/picosat-965`.
+`./src/native/picosat-965`. The following commands do this autmatically:
 
+    > wget http://fmv.jku.at/picosat/picosat-965.tar.gz
+    > tar -xf picosat-965.tar.gz -C src/native
+    
 To build Leo-III run:
 
     > sbt compile
@@ -74,10 +77,13 @@ contains all dependencies required by Leo-III.
     > java -jar target/scala-2.11/Leo\ III-assembly-0.1.jar
 
 Occasionally it might happen that multiple versions of Java are
-installed. The command line argument `-java-home` can be used
-to select a specific one. For example:
+installed. To enforce to correct version of Jave, overwrite
+`JAVA_HOME` and `PATH`:
 
-    > sbt -java-home /usr/lib/jvm/java-8-openjdk-amd64/ compile
+    > export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64/
+    > export PATH=$JAVA_HOME/bin:$PATH
+    > sbt compile
+    > sbt nativeCompile
 
 Many Linux distributions offer a native method to select the
 Java version. This often works better then selecting the Java

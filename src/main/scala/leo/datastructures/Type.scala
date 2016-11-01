@@ -26,7 +26,7 @@ import scala.language.implicitConversions
  *       will be removed from the type language as soon as it is expressive enough for general type constructors. Probably. Or not. We'll see.
  * @note Updated 14.06.2016 Introduced sort symbols to support TH1
  */
-abstract class Type extends Pretty {
+abstract class Type extends Pretty with Prettier {
 
   // Predicates on types
   val isBaseType: Boolean = false
@@ -57,13 +57,13 @@ abstract class Type extends Pretty {
 
   // Substitutions
   /**
-   * Substitute (free) occurences of `what` by `by`, e.g.
+   * syntactical replacement of  `what` by `by`, e.g.
    * {{{
    *   (Type.o ->: Type.i).substitute(Type.o, Type.i ->: Type.i)
    * }}}
    * yields {{{(Type.i ->: Type.i) ->: Type.i}}}
    */
-  def substitute(what: Type, by: Type): Type
+  def replace(what: Type, by: Type): Type
   def substitute(subst: Subst): Type
 
   /** if `this` is a polymorphic type (i.e. a forall type), the method returns the abstracted type where all type parameters bound

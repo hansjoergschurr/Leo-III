@@ -31,5 +31,4 @@ node {
 
 
     stage 'Small Benchmark'
-
 }

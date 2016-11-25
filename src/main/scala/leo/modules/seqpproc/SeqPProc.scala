@@ -8,7 +8,7 @@ import leo.modules.calculus.PatternUnification
 import leo.modules.output._
 import leo.modules.control.Control
 import leo.modules.{Parsing, SZSException, SZSOutput, Utility}
-import leo.modules.boolean_handling.satBasedUnitClause
+import leo.modules.boolean_handling.SatBasedUnitClauses
 
 
 /**
@@ -66,7 +66,7 @@ object SeqPProc extends Function1[Long, Unit]{
       Control.simp(result)
     }
 
-    satBasedUnitClause.findUnitClauses(result)
+    SatBasedUnitClauses.findUnitClauses(result)
     // Pre-unify new clauses
     result = result union Control.preunifySet(result)
     result = result.filterNot(cw => Clause.trivial(cw.cl))

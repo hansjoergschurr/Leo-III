@@ -1,16 +1,61 @@
 package leo.modules.boolean_handling
 
-import leo.datastructures.{AnnotatedClause, Literal, Term}
+import leo.datastructures.{AnnotatedClause, Literal, Term, Signature}
 import leo.modules.output.logger.Out
 import leo.modules.sat_solver.PicoSAT
 
-import scala.collection.mutable.HashMap
-import scala.collection.mutable.Set
+import scala.collection.immutable.HashMap
+import scala.collection.immutable.Set
+import scala.collection.mutable.{Set => MSet}
 
 /**
   * Created by Hans-Jörg Schurr  on 10/10/16.
   */
-object satBasedUnitClauses {
+
+class EqualityGraph private (val nodes: Set[Term], val edges: HashMap[Term, Set[Term]])(implicit sig: Signature) {
+
+  def makeChordal() : EqualityGraph = {
+    var g = this
+    val newEdges = MSet.empty
+
+    var n = this.nodes.head
+    var ns = this.nodes.tail
+    while(ns.nonEmpty) {
+      val neighbors = g.edges.getOrElse(n, Set.empty)
+      //for (l <- neighbors;
+      //     j <- neighbors; (l != j) && l.compareTo(j) ==   )
+
+      n = ns.head
+      ns = ns.tail
+    }
+    this
+  }
+
+  def addEdge(l: Term, j: Term) : EqualityGraph = {
+    val a_adj = this.edges.getOrElse(l, Set.empty) + j
+    val b_adj = this.edges.getOrElse(j, Set.empty) + l
+    val edges = this.edges.updated(l, a_adj).updated(j, b_adj)
+    EqualityGraph(this.nodes, edges)
+  }
+
+  def deleteNode(l: Term) : EqualityGraph = {
+    val neighbors = this.edges.getOrElse(l, Set.empty)
+    val ne = neighbors.foldLeft(this.edges) ((es,j) => es.updated(j, es.getOrElse(j, Set.empty) - j))
+    EqualityGraph(this.nodes - l, ne)
+  }
+
+  def iterateConstraints() : List[(Term, Term, Term)] = {
+    List.empty
+  }
+}
+
+object EqualityGraph {
+  def apply(nodes: Set[Term], edges: HashMap[Term, Set[Term]])(implicit sig: Signature): EqualityGraph = {
+    EqualityGraph(nodes, edges)
+  }
+}
+
+object SatBasedUnitClauses {
 
   private def sat_polarity(sat_lit : Int, literal : Literal) =
     literal.polarity match {
@@ -23,7 +68,7 @@ object satBasedUnitClauses {
     * @param clauses the matrix
     * @return a set of new unit clauses
     */
-  def findUnitClauses(clauses : scala.collection.immutable.Set[AnnotatedClause]) : scala.collection.immutable.Set[AnnotatedClause] = {
+  def findUnitClauses(clauses : Set[AnnotatedClause])(implicit sig: Signature) : Set[AnnotatedClause] = {
     Out.debug(s"### SAT based unit clauses.")
     var literalMap : HashMap[(Term,Term), Int] = HashMap();
     val solver = PicoSAT(true);
@@ -60,7 +105,7 @@ object satBasedUnitClauses {
       Out.debug(s"Deduced: ${l.pretty} ${s} ${r.pretty}")
     }
 
-    val satLiteralSet = Set[Int]()
+    val satLiteralSet = MSet[Int]()
     if(solver.solve() == PicoSAT.SAT){
       for(v <- literalMap.values) {
         solver.getAssignment(v) match {
@@ -101,7 +146,8 @@ object satBasedUnitClauses {
     //            sample clauses containing patterns
     //            use those to create additional clauses
     // Algorithm from An AIG-Based QBF-Solver Using SAT for Preprocessing
-    assert(false)
+    // TODO: Add the found clouses and activate the controll
+    //assert(false)
     scala.collection.immutable.Set.empty
   }
 }

@@ -16,19 +16,28 @@ class EqualityGraph private (val nodes: Set[Term], val edges: HashMap[Term, Set[
 
   def makeChordal() : EqualityGraph = {
     var g = this
-    val newEdges = MSet.empty
+    var newEdges = List[(Term,Term)]()
 
-    var n = this.nodes.head
+    var n = this.nodes.head // TODO: add an order here
     var ns = this.nodes.tail
     while(ns.nonEmpty) {
       val neighbors = g.edges.getOrElse(n, Set.empty)
-      //for (l <- neighbors;
-      //     j <- neighbors; (l != j) && l.compareTo(j) ==   )
+      for (l <- neighbors;
+           j <- neighbors; (l != j) && l.compareTo(j) != leo.datastructures.CMP_GT )  { // TODO: replace with complete comparison
+        g = g.addEdge(l,j)
+        newEdges = (l,j)::newEdges
+      }
+      g = g.deleteNode(n)
 
       n = ns.head
       ns = ns.tail
     }
-    this
+
+    newEdges.foldLeft(g) { case (g:EqualityGraph,(l:Term, j:Term)) => g.addEdge(l,j) }
+  }
+
+  def neighbors(n: Term): Set[Term] = {
+    this.edges.getOrElse(n, Set.empty)
   }
 
   def addEdge(l: Term, j: Term) : EqualityGraph = {
@@ -44,8 +53,8 @@ class EqualityGraph private (val nodes: Set[Term], val edges: HashMap[Term, Set[
     EqualityGraph(this.nodes - l, ne)
   }
 
-  def iterateConstraints() : List[(Term, Term, Term)] = {
-    List.empty
+  def getConstraints() : Set[(Term, Term, Term)] = {
+      for(n <- this.nodes; l <- this.neighbors(n); j <- this.neighbors(n); l != j; this.neighbors(l).contains(j)) yield (n,l,j)
   }
 }
 

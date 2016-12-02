@@ -14,16 +14,19 @@ import scala.collection.mutable.{Set => MSet}
 
 class EqualityGraph private (val nodes: Set[Term], val edges: HashMap[Term, Set[Term]])(implicit sig: Signature) {
 
-  def makeChordal() : EqualityGraph = {
+  def chordal : EqualityGraph = {
     var g = this
     var newEdges = List[(Term,Term)]()
 
-    var n = this.nodes.head // TODO: add an order here
-    var ns = this.nodes.tail
+    val sortedNodes = this.nodes.toList.sortWith((a, b) => this.neighbors(a).size < this.neighbors(b).size)
+    var n = sortedNodes.head
+    var ns = sortedNodes.tail
     while(ns.nonEmpty) {
       val neighbors = g.edges.getOrElse(n, Set.empty)
-      for (l <- neighbors;
-           j <- neighbors; (l != j) && l.compareTo(j) != leo.datastructures.CMP_GT )  { // TODO: replace with complete comparison
+      for {
+        l <- neighbors
+        j <- neighbors
+        if (l != j) && Term.LexicographicalOrdering.gt(l,j)} {
         g = g.addEdge(l,j)
         newEdges = (l,j)::newEdges
       }
@@ -33,7 +36,7 @@ class EqualityGraph private (val nodes: Set[Term], val edges: HashMap[Term, Set[
       ns = ns.tail
     }
 
-    newEdges.foldLeft(g) { case (g:EqualityGraph,(l:Term, j:Term)) => g.addEdge(l,j) }
+    newEdges.foldLeft(this) { case (g:EqualityGraph,(l:Term, j:Term)) => g.addEdge(l,j) }
   }
 
   def neighbors(n: Term): Set[Term] = {
@@ -44,23 +47,29 @@ class EqualityGraph private (val nodes: Set[Term], val edges: HashMap[Term, Set[
     val a_adj = this.edges.getOrElse(l, Set.empty) + j
     val b_adj = this.edges.getOrElse(j, Set.empty) + l
     val edges = this.edges.updated(l, a_adj).updated(j, b_adj)
-    EqualityGraph(this.nodes, edges)
+    EqualityGraph(this.nodes + l + j, edges)
   }
 
   def deleteNode(l: Term) : EqualityGraph = {
     val neighbors = this.edges.getOrElse(l, Set.empty)
-    val ne = neighbors.foldLeft(this.edges) ((es,j) => es.updated(j, es.getOrElse(j, Set.empty) - j))
+    val ne = neighbors.foldLeft(this.edges) ((es,j) => es.updated(j, es.getOrElse(j, Set.empty) - l))
     EqualityGraph(this.nodes - l, ne)
   }
 
-  def getConstraints() : Set[(Term, Term, Term)] = {
-      for(n <- this.nodes; l <- this.neighbors(n); j <- this.neighbors(n); l != j; this.neighbors(l).contains(j)) yield (n,l,j)
+  def constraints : Set[(Term, Term, Term)] = {
+      for {
+        n <- this.nodes
+        l <- this.neighbors(n); j <- this.neighbors(n)
+        if l != j
+        if Term.LexicographicalOrdering.gt(l,j)
+        if this.neighbors(l).contains(j)
+      } yield (n,l,j)
   }
 }
 
 object EqualityGraph {
-  def apply(nodes: Set[Term], edges: HashMap[Term, Set[Term]])(implicit sig: Signature): EqualityGraph = {
-    EqualityGraph(nodes, edges)
+  def apply(nodes: Set[Term] = Set.empty, edges: HashMap[Term, Set[Term]] = HashMap.empty)(implicit sig: Signature): EqualityGraph = {
+    new EqualityGraph(nodes, edges)
   }
 }
 
@@ -79,10 +88,11 @@ object SatBasedUnitClauses {
     */
   def findUnitClauses(clauses : Set[AnnotatedClause])(implicit sig: Signature) : Set[AnnotatedClause] = {
     Out.debug(s"### SAT based unit clauses.")
-    var literalMap : HashMap[(Term,Term), Int] = HashMap();
-    val solver = PicoSAT(true);
+    var literalMap : HashMap[(Term,Term), Int] = HashMap()
+    val solver = PicoSAT(true)
 
-    // Generate SAT problem
+    // Generate SAT problem and Equality Graph
+    var eq_g = EqualityGraph()
     var c = clauses.head
     var cs = clauses.tail
     while(cs.nonEmpty) {
@@ -96,8 +106,10 @@ object SatBasedUnitClauses {
                           literalMap += ((l.left, l.right) -> fresh)
                           sat_clause = sat_polarity(fresh, l) :: sat_clause
         }
+
+        if (l.equational) eq_g = eq_g.addEdge(l.left,l.right)
       }
-      Out.trace{s"Added to SAT problem: ${sat_clause}."}
+      Out.trace(s"Added to SAT problem: $sat_clause.")
       solver.addClause(sat_clause)
 
       c = cs.head
@@ -106,12 +118,17 @@ object SatBasedUnitClauses {
 
     Out.debug(s"SAT problem size:\tVars: ${solver.numVariables} Clauses: ${solver.numAddedClauses}")
 
+    // Add Equality Constraints
+    Out.debug(s"Equality Graph size:\tNodes: ${eq_g.nodes.size} Edges: ${eq_g.edges.values.map(_.size).sum/2}")
+    eq_g = eq_g.chordal
+    Out.debug(s"Chordal Equality Graph size:\tNodes: ${eq_g.nodes.size} Edges: ${eq_g.edges.values.map(_.size).sum/2}")
+
     // Output helpers
     val inverseMap = literalMap.map(_.swap)
     def debugOut(v:Int) = {
       val Some((l,r)) = inverseMap get v.abs
       val s = v > 0 match {case true => "=="; case false => "!="}
-      Out.debug(s"Deduced: ${l.pretty} ${s} ${r.pretty}")
+      Out.debug(s"Deduced: ${l.pretty} $s ${r.pretty}")
     }
 
     val satLiteralSet = MSet[Int]()
@@ -140,7 +157,7 @@ object SatBasedUnitClauses {
     while (satLiteralSet.nonEmpty) {
       val v = satLiteralSet.head
       satLiteralSet.remove(v)
-      Out.trace{s"Testing ${v}."}
+      Out.trace{s"Testing $v."}
 
       solver.assume(v)
       if (solver.solve() == PicoSAT.UNSAT) debugOut(-v:Int)
@@ -149,13 +166,12 @@ object SatBasedUnitClauses {
       }
       Out.trace(s"Vars to test: ${satLiteralSet.size}")
     }
-    // additions: use decidable unification to add clause
-    //            add equality consts: a=b /\ b = c => a =c
-    //    ideas: collect patterns during first iteration
-    //            sample clauses containing patterns
-    //            use those to create additional clauses
-    // Algorithm from An AIG-Based QBF-Solver Using SAT for Preprocessing
-    // TODO: Add the found clouses and activate the controll
+    // Algorithm from: An AIG-Based QBF-Solver Using SAT for Preprocessing
+    // EQ graph from: Boolean Satisfiability with Transitivity Constraints
+    // TODO: Add the found clauses and activate the control
+    // TODO: Utilize the EQ graph:
+    //        Add the edges added by the chordal construction to the map (how?)
+    //        Iterate as usual
     //assert(false)
     scala.collection.immutable.Set.empty
   }

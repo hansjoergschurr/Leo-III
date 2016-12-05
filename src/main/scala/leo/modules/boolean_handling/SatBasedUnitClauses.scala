@@ -6,7 +6,7 @@ import leo.modules.sat_solver.PicoSAT
 
 import scala.collection.immutable.HashMap
 import scala.collection.immutable.Set
-import scala.collection.mutable.{Set => MSet}
+import scala.collection.mutable.{Set => MSet, HashMap => MHashMap}
 
 /**
   * Created by Hans-Jörg Schurr  on 10/10/16.
@@ -81,6 +81,20 @@ object SatBasedUnitClauses {
       case false => - sat_lit
     }
 
+  private def order_terms(a: Term, b : Term) : (Term, Term) =
+  {if (Term.LexicographicalOrdering.gt(a,b)) (a,b) else (b,a)}
+
+  private def getSATLiteral(l: (Term, Term), s : PicoSAT)(implicit m: MHashMap[(Term,Term), Int]) : Int = {
+    m get l match {
+      case Some(sat_lit) => sat_lit
+      case None =>
+        val fresh = s.freshVariable
+        m put (l, fresh)
+        fresh
+      }
+  }
+
+
   /***
     * Uses a SAT solver to find unit clauses implied by the matrix.
     * @param clauses the matrix
@@ -88,7 +102,7 @@ object SatBasedUnitClauses {
     */
   def findUnitClauses(clauses : Set[AnnotatedClause])(implicit sig: Signature) : Set[AnnotatedClause] = {
     Out.debug(s"### SAT based unit clauses.")
-    var literalMap : HashMap[(Term,Term), Int] = HashMap()
+    implicit val literalMap : MHashMap[(Term,Term), Int] = MHashMap()
     val solver = PicoSAT(true)
 
     // Generate SAT problem and Equality Graph
@@ -99,14 +113,9 @@ object SatBasedUnitClauses {
       var sat_clause = List.empty[Int]
 
       for (l <-  c.cl.lits) {
-        val sat_val = literalMap get (l.left, l.right)
-        sat_val match {
-          case Some(sat_lit) => sat_clause = sat_polarity(sat_lit, l) :: sat_clause
-          case None => val fresh = solver.freshVariable
-                          literalMap += ((l.left, l.right) -> fresh)
-                          sat_clause = sat_polarity(fresh, l) :: sat_clause
-        }
-
+        val literal = order_terms(l.left, l.right)
+        val sat_val = getSATLiteral(literal, solver)
+        sat_clause = sat_polarity(sat_val, l) :: sat_clause
         if (l.equational) eq_g = eq_g.addEdge(l.left,l.right)
       }
       Out.trace(s"Added to SAT problem: $sat_clause.")
@@ -116,12 +125,16 @@ object SatBasedUnitClauses {
       cs = cs.tail
     }
 
-    Out.debug(s"SAT problem size:\tVars: ${solver.numVariables} Clauses: ${solver.numAddedClauses}")
-
     // Add Equality Constraints
     Out.debug(s"Equality Graph size:\tNodes: ${eq_g.nodes.size} Edges: ${eq_g.edges.values.map(_.size).sum/2}")
     eq_g = eq_g.chordal
     Out.debug(s"Chordal Equality Graph size:\tNodes: ${eq_g.nodes.size} Edges: ${eq_g.edges.values.map(_.size).sum/2}")
+    for((a,b,c) <- eq_g.constraints) { // generate a=b ∧ b=c => a=c
+      val (c1,c2,c3) = (order_terms(a,b), order_terms(b,c), order_terms(a,c))
+      val (l1,l2,l3) = (getSATLiteral(c1, solver), getSATLiteral(c2,solver), getSATLiteral(c3, solver))
+      solver.addClause(-l1,-l2,l3)
+    }
+    Out.debug(s"SAT problem size after EQ:\tVars: ${solver.numVariables} Clauses: ${solver.numAddedClauses}")
 
     // Output helpers
     val inverseMap = literalMap.map(_.swap)
@@ -145,11 +158,11 @@ object SatBasedUnitClauses {
     }
     else if(solver.solve() == PicoSAT.UNSAT) {
       Out.debug(s"Base SAT problem UNSAT. Input clauses contradictory.")
-      assert(false)
+      assert(false) // TODO: sensible result
     }
     else {
       Out.debug(s"Base SAT problem undecided.")
-      assert(false)
+      assert(false) // TODO: sensible result
     }
 
     Out.trace(s"Vars to test after first model: ${satLiteralSet.size}")
@@ -169,10 +182,9 @@ object SatBasedUnitClauses {
     // Algorithm from: An AIG-Based QBF-Solver Using SAT for Preprocessing
     // EQ graph from: Boolean Satisfiability with Transitivity Constraints
     // TODO: Add the found clauses and activate the control
-    // TODO: Utilize the EQ graph:
     //        Add the edges added by the chordal construction to the map (how?)
     //        Iterate as usual
-    //assert(false)
+    assert(false)
     scala.collection.immutable.Set.empty
   }
 }

@@ -15,13 +15,14 @@ import scala.collection.mutable.{Set => MSet, HashMap => MHashMap}
 class EqualityGraph private (val nodes: Set[Term], val edges: HashMap[Term, Set[Term]])(implicit sig: Signature) {
 
   def chordal : EqualityGraph = {
+    if (this.nodes.isEmpty) {return this}
     var g = this
     var newEdges = List[(Term,Term)]()
 
     val sortedNodes = this.nodes.toList.sortWith((a, b) => this.neighbors(a).size < this.neighbors(b).size)
-    var n = sortedNodes.head
-    var ns = sortedNodes.tail
+    var ns = sortedNodes
     while(ns.nonEmpty) {
+      val n = ns.head
       val neighbors = g.edges.getOrElse(n, Set.empty)
       for {
         l <- neighbors
@@ -32,7 +33,6 @@ class EqualityGraph private (val nodes: Set[Term], val edges: HashMap[Term, Set[
       }
       g = g.deleteNode(n)
 
-      n = ns.head
       ns = ns.tail
     }
 
@@ -105,12 +105,20 @@ object SatBasedUnitClauses {
     implicit val literalMap : MHashMap[(Term,Term), Int] = MHashMap()
     val solver = PicoSAT(true)
 
+    val oldUnitClauses : MSet[(Term,Term)]  = MSet()
+
     // Generate SAT problem and Equality Graph
     var eq_g = EqualityGraph()
     var c = clauses.head
-    var cs = clauses.tail
+    var cs = clauses
     while(cs.nonEmpty) {
+      val c = cs.head
       var sat_clause = List.empty[Int]
+
+      if(c.cl.lits.size == 1) {
+        val l = c.cl.lits.head
+        oldUnitClauses.add(order_terms(l.left, l.right))
+      }
 
       for (l <-  c.cl.lits) {
         val literal = order_terms(l.left, l.right)
@@ -121,9 +129,10 @@ object SatBasedUnitClauses {
       Out.trace(s"Added to SAT problem: $sat_clause.")
       solver.addClause(sat_clause)
 
-      c = cs.head
       cs = cs.tail
     }
+
+    Out.debug(s"SAT problem size before EQ:\tVars: ${solver.numVariables} Clauses: ${solver.numAddedClauses}")
 
     // Add Equality Constraints
     Out.debug(s"Equality Graph size:\tNodes: ${eq_g.nodes.size} Edges: ${eq_g.edges.values.map(_.size).sum/2}")
@@ -141,7 +150,11 @@ object SatBasedUnitClauses {
     def debugOut(v:Int) = {
       val Some((l,r)) = inverseMap get v.abs
       val s = v > 0 match {case true => "=="; case false => "!="}
-      Out.debug(s"Deduced: ${l.pretty} $s ${r.pretty}")
+      if (oldUnitClauses.contains((l,r))) {
+        Out.debug(s"Didn't deduce already known: ${l.pretty} $s ${r.pretty}")
+      }
+      else
+        Out.debug(s"Deduced: ${l.pretty} $s ${r.pretty}")
     }
 
     val satLiteralSet = MSet[Int]()
@@ -182,8 +195,6 @@ object SatBasedUnitClauses {
     // Algorithm from: An AIG-Based QBF-Solver Using SAT for Preprocessing
     // EQ graph from: Boolean Satisfiability with Transitivity Constraints
     // TODO: Add the found clauses and activate the control
-    //        Add the edges added by the chordal construction to the map (how?)
-    //        Iterate as usual
     assert(false)
     scala.collection.immutable.Set.empty
   }

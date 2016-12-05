@@ -9,6 +9,7 @@ import leo.modules.output._
 import leo.modules.control.Control
 import leo.modules.{Parsing, SZSException, SZSOutput, Utility}
 import leo.modules.boolean_handling.SatBasedUnitClauses
+import leo.modules.boolean_handling.PreprocessingControl
 
 
 /**
@@ -66,7 +67,6 @@ object SeqPProc extends Function1[Long, Unit]{
       Control.simp(result)
     }
 
-    SatBasedUnitClauses.findUnitClauses(result)
     // Pre-unify new clauses
     result = result union Control.preunifySet(result)
     result = result.filterNot(cw => Clause.trivial(cw.cl))
@@ -174,6 +174,8 @@ object SeqPProc extends Function1[Long, Unit]{
         state.addUnprocessed(preprocessed)
         if (preprocessIt.hasNext) Out.trace("--------------------")
       }
+
+      PreprocessingControl.satBasedUnitClauses(state.unprocessed union conjecture_preprocessed)
       Out.trace("## Preprocess END\n\n")
 
       // Debug output

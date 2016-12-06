@@ -1,12 +1,14 @@
 package leo.modules.boolean_handling
 
-import leo.datastructures.{AnnotatedClause, Literal, Term, Signature}
+import leo.datastructures.ClauseAnnotation.NoAnnotation
+import leo.datastructures._
 import leo.modules.output.logger.Out
 import leo.modules.sat_solver.PicoSAT
 
 import scala.collection.immutable.HashMap
 import scala.collection.immutable.Set
-import scala.collection.mutable.{Set => MSet, HashMap => MHashMap}
+import scala.collection.mutable.{HashMap => MHashMap, Set => MSet}
+import scala.runtime.Nothing$
 
 /**
   * Created by Hans-Jörg Schurr  on 10/10/16.
@@ -73,6 +75,19 @@ object EqualityGraph {
   }
 }
 
+/**
+  * This method tries to find new unit clauses by using a SAT solver.
+  * The method is roughly as follows:
+  *   For each clause (l1,l2,..,ln) in the input problem add a clause (x_l1,x_l2,..,x_ln) to the SAT
+  *   solver. Then for each unique literal l in the input problem assume -x_l1 (resp. x_l1). If the
+  *   SAT problem becomes unsatisfiable x_l1 (resp. -x_l1) forms a unit clause.
+  *
+  *   Furthermore the algorithm adds transitivity constraints for equalities to the SAT problem.
+  *   See:
+  *     Algorithm from: An AIG-Based QBF-Solver Using SAT for Preprocessing
+  *     EQ graph from: Boolean Satisfiability with Transitivity Constraints
+  */
+
 object SatBasedUnitClauses {
 
   private def sat_polarity(sat_lit : Int, literal : Literal) =
@@ -82,7 +97,7 @@ object SatBasedUnitClauses {
     }
 
   private def order_terms(a: Term, b : Term) : (Term, Term) =
-  {if (Term.LexicographicalOrdering.gt(a,b)) (a,b) else (b,a)}
+    {if (Term.LexicographicalOrdering.gt(a,b)) (a,b) else (b,a)}
 
   private def getSATLiteral(l: (Term, Term), s : PicoSAT)(implicit m: MHashMap[(Term,Term), Int]) : Int = {
     m get l match {
@@ -145,18 +160,6 @@ object SatBasedUnitClauses {
     }
     Out.debug(s"SAT problem size after EQ:\tVars: ${solver.numVariables} Clauses: ${solver.numAddedClauses}")
 
-    // Output helpers
-    val inverseMap = literalMap.map(_.swap)
-    def debugOut(v:Int) = {
-      val Some((l,r)) = inverseMap get v.abs
-      val s = v > 0 match {case true => "=="; case false => "!="}
-      if (oldUnitClauses.contains((l,r))) {
-        Out.debug(s"Didn't deduce already known: ${l.pretty} $s ${r.pretty}")
-      }
-      else
-        Out.debug(s"Deduced: ${l.pretty} $s ${r.pretty}")
-    }
-
     val satLiteralSet = MSet[Int]()
     if(solver.solve() == PicoSAT.SAT){
       for(v <- literalMap.values) {
@@ -171,31 +174,52 @@ object SatBasedUnitClauses {
     }
     else if(solver.solve() == PicoSAT.UNSAT) {
       Out.debug(s"Base SAT problem UNSAT. Input clauses contradictory.")
-      assert(false) // TODO: sensible result
+      // Return the empty clause
+      AnnotatedClause(Clause.empty, Role_Plain, NoAnnotation, ClauseAnnotation.PropNoProp)
     }
     else {
       Out.debug(s"Base SAT problem undecided.")
-      assert(false) // TODO: sensible result
+      return Set.empty
     }
 
     Out.trace(s"Vars to test after first model: ${satLiteralSet.size}")
 
+
+    // Output helpers
+    val inverseMap = literalMap.map(_.swap)
+    var output : Set[AnnotatedClause] = Set()
+    def debugOut(v:Int) : Option[AnnotatedClause] = {
+      val Some((l,r)) = inverseMap get v.abs
+      val s = v > 0 match {case true => "=="; case false => "!="}
+      if (oldUnitClauses.contains((l,r))) {
+        Out.debug(s"Didn't deduce already known: ${l.pretty} $s ${r.pretty}")
+        None
+      }
+      else {
+        Out.debug(s"Deduced: ${l.pretty} $s ${r.pretty}")
+        Some(AnnotatedClause(Clause(Literal(l, r, v>0)), Role_Plain, NoAnnotation, ClauseAnnotation.PropNoProp))
+      }
+    }
+
     while (satLiteralSet.nonEmpty) {
       val v = satLiteralSet.head
       satLiteralSet.remove(v)
-      Out.trace{s"Testing $v."}
+      Out.trace {
+        s"Testing $v."
+      }
 
       solver.assume(v)
-      if (solver.solve() == PicoSAT.UNSAT) debugOut(-v:Int)
+      if (solver.solve() == PicoSAT.UNSAT) {
+        debugOut(-v: Int) match {
+          case Some(oc) =>output += oc
+          case None => ;
+        }
+      }
       else if (solver.solve() == PicoSAT.SAT) {
         satLiteralSet.retain(solver.getAssignment(_).contains(false))
       }
       Out.trace(s"Vars to test: ${satLiteralSet.size}")
     }
-    // Algorithm from: An AIG-Based QBF-Solver Using SAT for Preprocessing
-    // EQ graph from: Boolean Satisfiability with Transitivity Constraints
-    // TODO: Add the found clauses and activate the control
-    assert(false)
-    scala.collection.immutable.Set.empty
+    output
   }
 }

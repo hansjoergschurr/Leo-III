@@ -175,7 +175,9 @@ object SeqPProc extends Function1[Long, Unit]{
         if (preprocessIt.hasNext) Out.trace("--------------------")
       }
 
-      PreprocessingControl.satBasedUnitClauses(state.unprocessed union conjecture_preprocessed)
+      val satUnitClauses = PreprocessingControl.satBasedUnitClauses(state.unprocessed union conjecture_preprocessed)
+      satUnitClauses.foreach(state.addUnprocessed)
+
       Out.trace("## Preprocess END\n\n")
 
       // Debug output

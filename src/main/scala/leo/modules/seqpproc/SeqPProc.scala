@@ -199,46 +199,6 @@ object SeqPProc {
     // Remaining stuff ...
     Out.info(s"Type checking passed. Searching for refutation ...")
       // Initialize indexes
-<<<<<<< HEAD
-      if (state.negConjecture != null) Control.fvIndexInit(remainingInput + state.negConjecture)
-      else Control.fvIndexInit(remainingInput)
-      Control.foIndexInit()
-      Out.trace(s"Symbols in conjecture: ${state.symbolsInConjecture.map(state.signature(_).name).mkString(",")}")
-      // Preprocessing
-      val conjecture_preprocessed = if (state.negConjecture != null) {
-        Out.debug("## Preprocess Neg.Conjecture BEGIN")
-        Out.trace(s"Neg. conjecture: ${state.negConjecture.pretty(sig)}")
-        val result = preprocess(state, state.negConjecture).filterNot(cw => Clause.trivial(cw.cl))
-        Out.debug(s"# Result:\n\t${
-          result.map {
-            _.pretty(sig)
-          }.mkString("\n\t")
-        }")
-        Out.trace("## Preprocess Neg.Conjecture END")
-        result
-      } else Set[AnnotatedClause]()
-
-      Out.debug("## Preprocess BEGIN")
-      val preprocessIt = remainingInput.iterator
-      while (preprocessIt.hasNext) {
-        val cur = preprocessIt.next()
-        Out.trace(s"# Process: ${cur.pretty(sig)}")
-        val processed = preprocess(state, cur)
-        Out.debug(s"# Result:\n\t${
-          processed.map {
-            _.pretty(sig)
-          }.mkString("\n\t")
-        }")
-        val preprocessed = processed.filterNot(cw => Clause.trivial(cw.cl))
-        state.addUnprocessed(preprocessed)
-        if (preprocessIt.hasNext) Out.trace("--------------------")
-      }
-
-      val satUnitClauses = PreprocessingControl.satBasedUnitClauses(state.unprocessed union conjecture_preprocessed)
-      satUnitClauses.foreach(state.addUnprocessed)
-
-      Out.trace("## Preprocess END\n\n")
-=======
     if (state.negConjecture != null) Control.initIndexes(state.negConjecture +: remainingInput)
     else Control.initIndexes(remainingInput)
 
@@ -273,8 +233,11 @@ object SeqPProc {
       state.addUnprocessed(preprocessed)
       if (preprocessIt.hasNext) Out.trace("--------------------")
     }
+
+    val satUnitClauses = PreprocessingControl.satBasedUnitClauses(state.unprocessed union conjecture_preprocessed)
+    satUnitClauses.foreach(state.addUnprocessed)
+
     Out.trace("## Preprocess END\n\n")
->>>>>>> master
 
       // Debug output
       if (Out.logLevelAtLeast(java.util.logging.Level.FINEST)) {

@@ -43,7 +43,7 @@ object constantExtraction {
         (l1, p1)
       }
 
-      val c1n = c1.map(loop(_))
+      val c1n = c1.map(loop)
 
       (c1n, c2)
     }

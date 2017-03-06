@@ -1,4 +1,4 @@
-package leo.modules.boolean_handling
+package leo.modules.special_processing
 
 /**
   * Created by Hans-Jörg Schurr on 11/25/16.

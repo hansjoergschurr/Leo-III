@@ -1,4 +1,4 @@
-package leo.modules.boolean_handling
+package leo.modules.special_processing
 
 import leo.datastructures.ClauseAnnotation.NoAnnotation
 import leo.datastructures._

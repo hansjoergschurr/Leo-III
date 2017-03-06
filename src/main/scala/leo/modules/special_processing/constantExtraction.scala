@@ -1,4 +1,4 @@
-package leo.modules.boolean_handling
+package leo.modules.special_processing
 
 import leo.datastructures.{AnnotatedClause, Literal, Term}
 import leo.modules.output.logger.Out
@@ -11,14 +11,12 @@ import scala.collection.SortedSet
   */
 object constantExtraction {
 
-  /* TODO:
-      - extend to equational literals
-      - delete clauses containing pure literals
-      - unit tests
+  /*  This file attempts to find literals not unifiable with any other literal. It was the first
+      algorithm implemented, but is certainly unsound.
+
+      Do not use this code.
    */
   def pureLiterals(clauses : SortedSet[AnnotatedClause]) : Set[AnnotatedClause] = {
-    val testSet : List[List[(Literal, Boolean)]] = clauses.map(_.cl.map(l => (l, !l.equational)).toList).toList
-
     type LiteralP = (Literal, Boolean)
 
     def testClause(c1p: AnyRef, c2p: AnyRef) : (Seq[LiteralP], Seq[LiteralP]) = {

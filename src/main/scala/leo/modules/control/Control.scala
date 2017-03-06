@@ -36,7 +36,7 @@ object Control {
   @inline final def convertDefinedEqualities(clSet: Set[AnnotatedClause])(implicit sig: Signature): Set[AnnotatedClause] = inferenceControl.DefinedEqualityProcessing.convertDefinedEqualities(clSet)(sig)
 
   // Preprocessing
-  import leo.modules.boolean_handling.PreprocessingControl
+  import leo.modules.special_processing.PreprocessingControl
   @inline final def satBasedUnitClauses(clSet: Set[AnnotatedClause])(implicit sig: Signature): Set[AnnotatedClause] = PreprocessingControl.satBasedUnitClauses(clSet)(sig)
 
   @inline final def specialInstances(cl: AnnotatedClause)(implicit sig: Signature): Set[AnnotatedClause] = inferenceControl.SpecialInstantiationControl.specialInstances(cl)(sig)

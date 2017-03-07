@@ -9,7 +9,7 @@ import scala.collection.SortedSet
 /**
   * Created by Hans-Jörg Schurr on 6/13/16.
   */
-object constantExtraction {
+object ConstantExtraction {
 
   /*  This file attempts to find literals not unifiable with any other literal. It was the first
       algorithm implemented, but is certainly unsound.

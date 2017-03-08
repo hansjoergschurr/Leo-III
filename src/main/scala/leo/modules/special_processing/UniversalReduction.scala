@@ -9,7 +9,7 @@ import leo.modules.output.logger.Out
   */
 object UniversalReduction {
 
-  private def litIsBooleanVar(l: Literal) : Boolean = {
+  def litIsBooleanVar(l: Literal) : Boolean = {
     !l.equational && l.left.isVariable && l.left.ty == o
   }
 

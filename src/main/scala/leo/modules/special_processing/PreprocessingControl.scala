@@ -7,7 +7,11 @@ package leo.modules.special_processing
 import leo.datastructures.{AnnotatedClause, Signature}
 
 object PreprocessingControl {
-     final def satBasedUnitClauses(clSet: Set[AnnotatedClause])(implicit sig: Signature): Set[AnnotatedClause] = {
-          SatBasedUnitClauses.findUnitClauses(clSet)
-     }
+  final def satBasedUnitClauses(clSet: Set[AnnotatedClause])(implicit sig: Signature): Set[AnnotatedClause] = {
+    SatBasedUnitClauses.findUnitClauses(clSet)
+  }
+
+  final def universalReduction(clSet: Set[AnnotatedClause])(implicit sig: Signature): Set[AnnotatedClause] = {
+    UniversalReduction.removeUniversalVariables(clSet)
+  }
 }

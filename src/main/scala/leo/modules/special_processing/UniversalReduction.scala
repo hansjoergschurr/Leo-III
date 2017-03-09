@@ -25,7 +25,8 @@ object UniversalReduction extends CalculusRule{
   /**
     * This method removes universally quantified variables from clauses. Such variables can be removed, if
     * they appear only as individual literals, and nowhere else.
-    * Furthermore, clauses which contain variables in both polarities are removed because they are tautological.
+    * Furthermore, clauses which contain universally quantified boolan variables as literal in both polarities
+    * are removed because they are tautological.
     *
     * @param clauses the matrix
     * @return new set of clauses

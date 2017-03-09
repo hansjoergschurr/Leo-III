@@ -2,12 +2,17 @@ package leo.modules.special_processing
 
 import leo.datastructures._
 import leo.modules.HOLSignature.o
+import leo.modules.calculus.CalculusRule
+import leo.modules.output.SZS_EquiSatisfiable
 import leo.modules.output.logger.Out
 
 /**
   * Created by Hans-Jörg Schurr on 3/7/17.
   */
-object UniversalReduction {
+object UniversalReduction extends CalculusRule{
+
+  val name = "UnivRed"
+  val inferenceStatus = SZS_EquiSatisfiable
 
   def litIsBooleanVar(l: Literal) : Boolean = {
     !l.equational && l.left.isVariable && l.left.ty == o
@@ -49,7 +54,10 @@ object UniversalReduction {
         val newClause = Clause(c.cl.lits.filter(l => {
           l.equational || !l.left.isVariable || !blnVars.contains(l.left)
         }))
-        Some(AnnotatedClause(newClause, c.role, c.annotation, c.properties))
+        if(newClause != c.cl) {
+          Out.trace(s"Universal reduction: ${c.cl.pretty} -> ${newClause.pretty}")
+          Some(AnnotatedClause(newClause, c.role, ClauseAnnotation.InferredFrom(UniversalReduction, c), c.properties))
+        } else Some(c)
       }
     }
   }

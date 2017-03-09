@@ -1,13 +1,12 @@
 package leo.modules.special_processing
 
+import leo.datastructures.Term._
 import leo.datastructures._
-import Term._
-import leo.{Checked, LeoTestSuite}
 import leo.modules.HOLSignature.o
+import leo.modules.calculus
 import leo.modules.calculus._
-import leo.modules.control.Control
-import leo.modules.output.logger.Out
 import leo.modules.parsers.Input
+import leo.{Checked, LeoTestSuite}
 
 /**
   * Created by Hans-Jörg Schurr on 3/8/17.
@@ -52,18 +51,77 @@ class UniversalReductionTest extends LeoTestSuite {
     assert(!UniversalReduction.litIsBooleanVar(l2))
   }
 
-  private def getCNF(s: String)(implicit sig: Signature) : Seq[Clause] = {
+  private def getCNF(s: String)(implicit sig: Signature) : Set[AnnotatedClause] = {
     val vargen = freshVarGenFromBlank
     val c = Literal(Input.readFormula(s), true)
-    Out.output(c.pretty)
-    leo.modules.calculus.FullCNF(vargen,Clause.mkUnit(c))
+    val m = calculus.FullCNF(vargen,Clause.mkUnit(c))
+    Set(m map (AnnotatedClause(_,ClauseAnnotation.NoAnnotation)) : _*)
   }
 
-  //Tests: Remove from clause, don't remove, tautological, multiple clauses
+  // p foreach {p => Out.output(p.pretty)}
   test("Universal Reduction: Remove a Universal Variable", Checked) {
     implicit val s = getFreshSignature
 
-    val problem = getCNF("? [F: ($i > $o)] : (! [X: $o, Y: $i]:( X | (F @ Y)))")
-    problem foreach {p => Out.output(p.pretty)}
+    val p = getCNF("? [F: ($i > $o)] : (! [X: $o, Y: $i]:( X | (F @ Y)))")
+    val p_n = UniversalReduction.removeUniversalVariables(p)
+    assert(p_n != p)
+    assert(p_n.size == 1)
+    assert(p_n.head.cl.lits.size == 1)
+  }
+
+  test("Universal Reduction: Remove a Universal Variable 2", Checked) {
+    implicit val s = getFreshSignature
+
+    val p = getCNF("? [F: ($i > $o)] : (! [X: $o, Y: $i]:((F @ Y) | X))")
+    val p_n = UniversalReduction.removeUniversalVariables(p)
+    assert(p_n != p)
+    assert(p_n.size == 1)
+    assert(p_n.head.cl.lits.size == 1)
+  }
+
+  test("Universal Reduction: Remove a Universal Variable 3", Checked) {
+    implicit val s = getFreshSignature
+
+    val p = getCNF("? [F: ($i > $o)] : (! [X: $o, Y: $i]:(((F @ Y) | X) & ( X | (F @ Y))))")
+    val p_n = UniversalReduction.removeUniversalVariables(p).toArray
+    assert(p_n.length == 2)
+    assert(p_n(0).cl.lits.size == 1)
+    assert(p_n(1).cl.lits.size == 1)
+  }
+
+  test("Universal Reduction: Don't Remove a Universal Variable", Checked) {
+    implicit val s = getFreshSignature
+
+    val p = getCNF("? [F: ($o > $o)] : (! [X: $o, Y: $i]:( X | (F @ X)))")
+    val p_n = UniversalReduction.removeUniversalVariables(p)
+    assert(p_n == p)
+    assert(p_n.size == 1)
+    assert(p_n.head.cl.lits.size == 2)
+  }
+
+  test("Universal Reduction: Don't Remove a Universal Variable 2", Checked) {
+    implicit val s = getFreshSignature
+
+    val p = getCNF("? [F: ($o > $o)] : (! [X: $o, Y: $i]:((F @ X) | X))")
+    val p_n = UniversalReduction.removeUniversalVariables(p)
+    assert(p_n == p)
+  }
+
+  test("Universal Reduction: Don't Remove a Universal Variable 3", Checked) {
+    implicit val s = getFreshSignature
+
+    val p = getCNF("? [F: ($o > $o)] : (! [X: $o, Y: $i]:(((F @ X) | X) & ( X | (F @ X))))")
+    val p_n = UniversalReduction.removeUniversalVariables(p)
+    assert(p_n == p)
+  }
+
+  test("Universal Reduction: Tautological Clauses", Checked) {
+    implicit val s = getFreshSignature
+
+    val p = getCNF("! [X: $o]:((X | ~(X)) & X)")
+    val p_n = UniversalReduction.removeUniversalVariables(p)
+    assert(p_n.size == 1)
+    assert(p_n.head.cl.lits.isEmpty)
+
   }
 }

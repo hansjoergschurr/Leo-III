@@ -2,20 +2,20 @@ package leo.modules.special_processing
 
 import leo.datastructures.ClauseAnnotation.NoAnnotation
 import leo.datastructures._
+import leo.modules.calculus.CalculusRule
+import leo.modules.output.SZS_EquiSatisfiable
 import leo.modules.output.logger.Out
 import leo.modules.sat_solver.PicoSAT
 
-import scala.collection.immutable.HashMap
-import scala.collection.immutable.Set
+import scala.collection.immutable.{HashMap, Set}
 import scala.collection.mutable.{HashMap => MHashMap, Set => MSet}
-import scala.runtime.Nothing$
 
 /**
   * Created by Hans-Jörg Schurr  on 10/10/16.
+  *
+  * Data structure to represent the equalities appearing in a formula.
   */
-
 class EqualityGraph private (val nodes: Set[Term], val edges: HashMap[Term, Set[Term]])(implicit sig: Signature) {
-
   def chordal : EqualityGraph = {
     if (this.nodes.isEmpty) {return this}
     var g = this
@@ -87,8 +87,9 @@ object EqualityGraph {
   *     Algorithm from: An AIG-Based QBF-Solver Using SAT for Preprocessing
   *     EQ graph from: Boolean Satisfiability with Transitivity Constraints
   */
-
-object SatBasedUnitClauses {
+object SatBasedUnitClauses extends CalculusRule {
+  val name = "SatBasedUnitClauses"
+  val inferenceStatus = SZS_EquiSatisfiable
 
   private def sat_polarity(sat_lit : Int, literal : Literal) =
     literal.polarity match {
@@ -108,7 +109,6 @@ object SatBasedUnitClauses {
         fresh
       }
   }
-
 
   /***
     * Uses a SAT solver to find unit clauses implied by the matrix.
@@ -183,7 +183,6 @@ object SatBasedUnitClauses {
     }
 
     Out.trace(s"Vars to test after first model: ${satLiteralSet.size}")
-
 
     // Output helpers
     val inverseMap = literalMap.map(_.swap)

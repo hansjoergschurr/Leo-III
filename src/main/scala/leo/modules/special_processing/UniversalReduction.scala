@@ -9,7 +9,7 @@ import leo.modules.output.logger.Out
 /**
   * Created by Hans-Jörg Schurr on 3/7/17.
   */
-object UniversalReduction extends CalculusRule{
+object UniversalReduction extends CalculusRule {
 
   val name = "UnivRed"
   val inferenceStatus = SZS_EquiSatisfiable

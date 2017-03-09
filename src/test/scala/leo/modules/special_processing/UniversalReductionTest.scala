@@ -52,17 +52,18 @@ class UniversalReductionTest extends LeoTestSuite {
     assert(!UniversalReduction.litIsBooleanVar(l2))
   }
 
-  private def getCNF(s: String)(implicit sig: Signature) : Set[AnnotatedClause] = {
-    val c = Seq(Literal(Input.readFormula(s), true))
-    val p = AnnotatedClause(Clause.mkClause(c), ClauseAnnotation.NoAnnotation)
-    Control.cnf(p)
+  private def getCNF(s: String)(implicit sig: Signature) : Seq[Clause] = {
+    val vargen = freshVarGenFromBlank
+    val c = Literal(Input.readFormula(s), true)
+    Out.output(c.pretty)
+    leo.modules.calculus.FullCNF(vargen,Clause.mkUnit(c))
   }
 
   //Tests: Remove from clause, don't remove, tautological, multiple clauses
   test("Universal Reduction: Remove a Universal Variable", Checked) {
     implicit val s = getFreshSignature
 
-    val problem = getCNF("?[X1:$o]:X1")
-    problem foreach {p => Out.output(o.pretty)}
+    val problem = getCNF("? [F: ($i > $o)] : (! [X: $o, Y: $i]:( X | (F @ Y)))")
+    problem foreach {p => Out.output(p.pretty)}
   }
 }

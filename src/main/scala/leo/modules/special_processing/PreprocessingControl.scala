@@ -14,4 +14,13 @@ object PreprocessingControl {
   final def universalReduction(clSet: Set[AnnotatedClause])(implicit sig: Signature): Set[AnnotatedClause] = {
     UniversalReduction.removeUniversalVariables(clSet)
   }
+
+  final def blockedClauseElimination(clSet: Set[AnnotatedClause])(implicit  sig: Signature): Set[AnnotatedClause] = {
+    assert(BlockedClauseElimination.isEqualityFree(clSet))
+    BlockedClauseElimination.removeBlockedClauses(clSet)
+  }
+
+  final def booleanReEncoding(clSet: Set[AnnotatedClause])(implicit  sig: Signature): Set[AnnotatedClause] = {
+    BooleanReEncoding.reencodeBooleans(clSet) //TODO: Add configuration support for the parameters
+  }
 }

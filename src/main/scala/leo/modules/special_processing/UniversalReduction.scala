@@ -11,8 +11,8 @@ import leo.modules.output.logger.Out
   */
 object UniversalReduction extends CalculusRule {
 
-  val name = "UnivRed"
-  val inferenceStatus = SZS_EquiSatisfiable
+  override def name = "UnivRed"
+  override def inferenceStatus = SZS_EquiSatisfiable
 
   def litIsBooleanVar(l: Literal) : Boolean = {
     !l.equational && l.left.isVariable && l.left.ty == o

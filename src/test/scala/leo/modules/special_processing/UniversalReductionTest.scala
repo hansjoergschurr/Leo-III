@@ -122,6 +122,5 @@ class UniversalReductionTest extends LeoTestSuite {
     val p_n = UniversalReduction.removeUniversalVariables(p)
     assert(p_n.size == 1)
     assert(p_n.head.cl.lits.isEmpty)
-
   }
 }

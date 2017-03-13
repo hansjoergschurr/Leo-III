@@ -40,7 +40,7 @@ object BooleanReEncoding extends CalculusRule {
     }
     val fresh_c = clauses map { c =>
       val lits = c.cl.lits map wrap
-      AnnotatedClause(Clause(lits),c.annotation, c.properties)
+      AnnotatedClause(Clause(lits), c.role, ClauseAnnotation.InferredFrom(BooleanReEncoding, Seq(c, c_true, c_false)) , c.properties)
     }
 
     fresh_c + c_true + c_false

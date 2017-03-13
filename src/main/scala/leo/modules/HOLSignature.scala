@@ -1,9 +1,9 @@
 package leo.modules
 
-import leo.datastructures.{Term, Type, Signature, Kind}
-import Term.{intToBoundVar, intsToBoundVar, mkApp, mkAtom, mkTermAbs, mkTermApp, Λ,Symbol,∙}
-import Kind.{superKind, * => typeKind}
-import Type.typeVarToType
+import leo.datastructures.Kind.{superKind, * => typeKind}
+import leo.datastructures.Term.{Symbol, intToBoundVar, intsToBoundVar, mkApp, mkAtom, mkTermAbs, mkTermApp, Λ, ∙}
+import leo.datastructures.Type.typeVarToType
+import leo.datastructures.{Kind, Signature, Term, Type}
 
 import scala.language.implicitConversions
 
@@ -314,7 +314,7 @@ object HOLSignature {
     }
   }
 
-  /** HOL frue constant */
+  /** HOL true constant */
   object LitTrue extends HOLConstant      { val key = trueKey; val ty = o }
   /** HOL false constant */
   object LitFalse extends HOLConstant     { val key = falseKey; val ty = o }

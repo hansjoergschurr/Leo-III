@@ -210,7 +210,7 @@ trait Signature {
     case Some(t) => t == ty
   })
 
-  /** Returns a set of all primtive symbols. */
+  /** Returns a set of all primitive symbols. */
   def primitiveSymbols: Set[Key]
   /** Returns a set of all indexed fixed constants keys */
   def fixedSymbols: Set[Key]

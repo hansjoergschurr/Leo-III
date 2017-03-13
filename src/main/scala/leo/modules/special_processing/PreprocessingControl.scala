@@ -4,6 +4,7 @@ package leo.modules.special_processing
   * Created by Hans-Jörg Schurr on 11/25/16.
   */
 
+import leo.Configuration
 import leo.datastructures.{AnnotatedClause, Signature}
 
 object PreprocessingControl {
@@ -21,6 +22,7 @@ object PreprocessingControl {
   }
 
   final def booleanReEncoding(clSet: Set[AnnotatedClause])(implicit  sig: Signature): Set[AnnotatedClause] = {
-    BooleanReEncoding.reencodeBooleans(clSet) //TODO: Add configuration support for the parameters
+    val wrapEqs = Configuration.isSet("bre_dontWrapEqs")
+    BooleanReEncoding.reencodeBooleans(clSet, wrapEqs)
   }
 }

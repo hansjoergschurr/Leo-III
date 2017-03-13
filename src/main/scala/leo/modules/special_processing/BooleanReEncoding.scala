@@ -1,6 +1,8 @@
 package leo.modules.special_processing
 
-import leo.datastructures.{AnnotatedClause, Signature}
+import leo.datastructures.Term._
+import leo.datastructures._
+import leo.modules.HOLSignature.{===, LitFalse, LitTrue, o}
 import leo.modules.calculus.CalculusRule
 import leo.modules.output.{SZS_EquiSatisfiable, SuccessSZS}
 
@@ -12,22 +14,35 @@ object BooleanReEncoding extends CalculusRule {
   override def inferenceStatus: SuccessSZS = SZS_EquiSatisfiable
 
   /**
-    * Replaces literals made up from Boolean universally or existentially quantified variables (Skolem functions) `X`
-    * with a new predicate `P(x)`. Furthermore two clauses `P(1)` and `~P(0)` are added to ensure equi-satisfiability.
-    * This suppresses primitive substitution.
+    * Replaces literals with a new predicate `P(x)`. Furthermore two clauses `P(1)` and `~P(0)` are added to
+    * ensure equi-satisfiability. This delays primitive substitution until unification is applied once.
     *
     * @param clauses The input clauses.
-    * @param freshConstants Use two new constants for true (`1`) and false (`0`). This will also change the type of the
-    *                       variables.
-    * @param replaceInTerms Replaces occurrences of the variables inside of terms too. This is automatically set to
-    *                       `true` if `freshConstant` is set to `true`.
-    * @param replaceNonSkolem Replaces Boolean functions which are not Skolem functions.
+    * @param wrapEqualities Wrap equalities
     * @return A new matrix.
     */
   def reencodeBooleans(clauses : Set[AnnotatedClause],
-                       freshConstants: Boolean = false,
-                       replaceInTerms: Boolean = false,
-                       replaceNonSkolem: Boolean = false)(implicit sig: Signature) : Set[AnnotatedClause] = {
-    clauses
+                       wrapEqualities: Boolean = true)(implicit sig: Signature) : Set[AnnotatedClause] = {
+    val p = mkAtom(sig.addUninterpreted("BoolEnc", o ->: o))
+    val p_true = mkTermApp(p, LitTrue)
+    val p_false = mkTermApp(p, LitFalse)
+    val c_true = AnnotatedClause(Clause.mkUnit(Literal(p_true, true)), ClauseAnnotation.NoAnnotation)
+    val c_false = AnnotatedClause(Clause.mkUnit(Literal(p_false, false)), ClauseAnnotation.NoAnnotation)
+
+    def wrap(lit: Literal) : Literal = {
+      if(lit.equational) {
+        if(wrapEqualities) {
+          Literal(mkTermApp(p, mkTermApp(===, List(lit.left, lit.right))), lit.polarity)
+        } else lit
+      } else {
+        Literal(mkTermApp(p, lit.left), lit.polarity)
+      }
+    }
+    val fresh_c = clauses map { c =>
+      val lits = c.cl.lits map wrap
+      AnnotatedClause(Clause(lits),c.annotation, c.properties)
+    }
+
+    fresh_c + c_true + c_false
   }
 }

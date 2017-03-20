@@ -91,11 +91,7 @@ object SatBasedUnitClauses extends CalculusRule {
   val name = "SatBasedUnitClauses"
   val inferenceStatus = SZS_EquiSatisfiable
 
-  private def sat_polarity(sat_lit : Int, literal : Literal) =
-    literal.polarity match {
-      case true => sat_lit
-      case false => - sat_lit
-    }
+  private def sat_polarity(sat_lit : Int, literal : Literal) = if (literal.polarity) sat_lit else - sat_lit
 
   private def order_terms(a: Term, b : Term) : (Term, Term) =
     {if (Term.LexicographicalOrdering.gt(a,b)) (a,b) else (b,a)}
@@ -124,7 +120,6 @@ object SatBasedUnitClauses extends CalculusRule {
 
     // Generate SAT problem and Equality Graph
     var eq_g = EqualityGraph()
-    var c = clauses.head
     var cs = clauses
     while(cs.nonEmpty) {
       val c = cs.head
@@ -172,7 +167,7 @@ object SatBasedUnitClauses extends CalculusRule {
         }
       }
     }
-    else if(solver.solve() == PicoSAT.UNSAT) {
+    else if(solver.state == PicoSAT.UNSAT) {
       Out.debug(s"Base SAT problem UNSAT. Input clauses contradictory.")
       // Return the empty clause
       AnnotatedClause(Clause.empty, Role_Plain, NoAnnotation, ClauseAnnotation.PropNoProp)
@@ -189,7 +184,7 @@ object SatBasedUnitClauses extends CalculusRule {
     var output : Set[AnnotatedClause] = Set()
     def debugOut(v:Int) : Option[AnnotatedClause] = {
       val Some((l,r)) = inverseMap get v.abs
-      val s = v > 0 match {case true => "=="; case false => "!="}
+      val s = if(v > 0) "==" else "!="
       if (oldUnitClauses.contains((l,r))) {
         Out.debug(s"Didn't deduce already known: ${l.pretty} $s ${r.pretty}")
         None
@@ -214,7 +209,7 @@ object SatBasedUnitClauses extends CalculusRule {
           case None => ;
         }
       }
-      else if (solver.solve() == PicoSAT.SAT) {
+      else if (solver.state == PicoSAT.SAT) {
         satLiteralSet.retain(solver.getAssignment(_).contains(false))
       }
       Out.trace(s"Vars to test: ${satLiteralSet.size}")

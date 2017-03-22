@@ -25,10 +25,16 @@ object BlockedClauseElimination extends CalculusRule {
     }))
   }
 
-  def isNotResOrValid(C: Clause, D: Clause, blockingLit: Term, resLit: Term): Boolean = {
+  def isNotResOrValid(C: Clause, D: Clause, blockingLit: Term, resLit: Term)(implicit sig: Signature) : Boolean = {
     if(mayUnify(blockingLit, resLit)) {
       if (!PatternUnification.isPattern(resLit)) false
       else {
+        val maxFree = C.maxImplicitlyBound
+        val D_lifted = D.substitute(Subst.shift(maxFree))
+        val resLit_lifted = resLit.substitute(Subst.shift(maxFree))
+        val resolvent = Clause(C.lits ++ D.lits)
+        val vargen = leo.modules.calculus.freshVarGen(resolvent)
+        val uni = PatternUnification.unify(vargen, blockingLit, resLit_lifted)
         false
       }
     }

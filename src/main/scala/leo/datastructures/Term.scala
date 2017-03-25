@@ -33,7 +33,7 @@ trait Term extends Pretty with Prettier {
   def isTermAbs: Boolean
   /** Returns true iff `this` is a type abstraction (Λ. t') for some term t'. */
   def isTypeAbs: Boolean
-  /** Returns trie iff `this` is an application h ∙ args. */
+  /** Returns true iff `this` is an application h ∙ args. */
   def isApp: Boolean
   def flexHead: Boolean
   /** `true` is the term is known to be in beta-normal form, else false.

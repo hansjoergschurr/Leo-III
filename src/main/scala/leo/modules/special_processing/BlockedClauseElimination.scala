@@ -58,6 +58,14 @@ class PatternIndex(implicit sig: Signature) {
   def lookupResCandidatesInClause(l: Literal, c: Clause) : Set[Literal] =
   { lookupResCandidates(l).flatMap(t => if (t._1 == c) Some(t._2) else None)}
 
+  def resCandidatesByClause(l: Literal): Seq[(Clause, Set[Literal])] =
+  {
+    val s = lookupResCandidates(l)
+    val out = new HashMap[Clause, Set[Literal]] with MultiMap[Clause, Literal]
+    s.foreach(cl => out.addBinding(cl._1, cl._2))
+    out.toSeq
+  }
+
   def numTotalPartners(l: Literal) : Int = {lookupResCandidates(l).size}
 
   def removeClause(c: Clause) : Unit = {
@@ -119,15 +127,33 @@ object BlockedClauseElimination extends CalculusRule {
     }))
   }
 
-  def isNotResOrValid(C: Clause, blockingLit: Literal, D: Clause, resLit: Literal)(implicit sig: Signature) : Boolean = {
+  /**
+    *
+    * @param C clause one
+    * @param blockingLit potential blocking lit
+    * @param D partner clause
+    * @param partners literals potentially unifiable with `blockingLit` e.g. have the same head symbol and are all patterns
+    * @param sig
+    * @return true if `blockingLit` is blocking C rel. to D
+    */
+  def isNotResOrValid(C: Clause, blockingLit: Literal, D: Clause, partners: Set[Literal])(implicit sig: Signature) : Boolean = {
     val resolvent = Clause(C.lits ++ D.lits)
     val vargen = leo.modules.calculus.freshVarGen(resolvent)
     val maxFree = C.maxImplicitlyBound
-
     val D_lifted = D.substitute(Subst.shift(maxFree))
-    val resLit_lifted = resLit.substitute(Subst.shift(maxFree))
 
-    val uni = PatternUnification.unify(vargen, blockingLit.left, resLit_lifted.left)
+    val blocking_const = blockingLit.left
+    val partners_const = partners.map(_.substitute(Subst.shift(maxFree)).left)
+
+    partners_const.forall(s => {
+      var n=Set(s)
+      //PatternUnification.unifyAll(vargen, )
+
+      false
+    })
+
+    //val resLit_lifted = resLit.substitute(Subst.shift(maxFree))
+    //val uni = PatternUnification.unify(vargen, blockingLit.left, resLit_lifted.left)
     true
   }
 
@@ -218,11 +244,11 @@ object BlockedClauseElimination extends CalculusRule {
 
     while (queue.nonEmpty) {
       val ((c,l), _) = queue.dequeue()
-      val s = rigidPatternIndex.lookupResCandidates(l)
+      val s = rigidPatternIndex.resCandidatesByClause(l)
       val blocked = s.forall(cl => {
-        val c2 = cl._1
-        val l2 = cl._2
-        val b = isNotResOrValid(c, l, c2, l2)
+        val c2 = cl._1 //Partner Clause
+        val ls = cl._2 //Partner Literal
+        val b = testValidityRes(c, l, c2, ls)
         if(b) {
           deactivations.deactivates(c2, (c,l))
           false

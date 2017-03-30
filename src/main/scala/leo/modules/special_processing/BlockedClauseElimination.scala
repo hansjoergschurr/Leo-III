@@ -16,42 +16,33 @@ import scala.collection.mutable.{HashMap, MultiMap, Set}
 class PatternIndex(implicit sig: Signature) {
   private val rigidIndex =
     new HashMap[(Boolean, Term), Set[(Clause, Literal)]] with MultiMap[(Boolean, Term), (Clause, Literal)]
-  private val flexPositive = Set[(Clause, Literal)]()
-  private val flexNegative = Set[(Clause, Literal)]()
-  private val rigidPositive = Set[(Clause, Literal)]()
-  private val rigidNegative = Set[(Clause, Literal)]()
+  private val flex = Set[(Clause, Literal)]()
+  private val rigid = Set[(Clause, Literal)]()
 
   def addClauseLiteralPair(cl: Clause, l: Literal) : Unit = {
     assert(PatternUnification.isPattern(l.left))
     val head = l.left.headSymbol
     val pol = l.polarity
-    val f = if (pol) flexPositive else flexNegative
-    val r = if (pol) rigidPositive else rigidNegative
-    head match {
-        // Flex case
-      case Bound(_, _) =>
-       f.add((cl, l))
-        // Rigid case
-      case _ =>
-        r.add((cl, l))
-        rigidIndex.addBinding((pol, head), (cl, l))
-
+    if (head.isVariable) {
+      // Flex case
+      flex.add((cl, l))
+    }
+    else {
+      // Rigid case
+      rigid.add((cl, l))
+      rigidIndex.addBinding((pol, head), (cl, l))
     }
   }
 
   def lookupResCandidates(l: Literal) : Set[(Clause, Literal)] = {
     val head = l.left.headSymbol
     val pol = l.polarity
-    head match {
-      // Flex case
-      case Bound(_, _) =>
-        if (pol) { flexNegative union rigidNegative }
-        else { flexPositive union rigidPositive } //select the inverse polarity
-      // Rigid case
-      case _ =>
-        val r = rigidIndex.getOrElse((!pol, head), Set.empty)
-        val f = if (pol) flexNegative else flexPositive //select the inverse polarity
-        r union f
+    if (head.isVariable) {
+      rigid union flex
+    }
+    else {
+      val r = rigidIndex.getOrElse((!pol, head), Set.empty)
+      r union flex
     }
   }
 
@@ -69,19 +60,15 @@ class PatternIndex(implicit sig: Signature) {
   def numTotalPartners(l: Literal) : Int = {lookupResCandidates(l).size}
 
   def removeClause(c: Clause) : Unit = {
-    flexNegative.retain(_._1 != c)
-    flexPositive.retain(_._1 != c)
-    rigidPositive.retain(_._1 != c)
-    rigidNegative.retain(_._1 != c)
+    flex.retain(_._1 != c)
+    rigid.retain(_._1 != c)
     rigidIndex.mapValues(s => {s.retain(_._1 != c); s})
   }
 
   def debugOutput() : Unit = {
     Out.debug(s"Pattern stats:")
-    Out.debug(s"\tFlex Positive: ${flexPositive.size}")
-    Out.debug(s"\tFlex Negative: ${flexNegative.size}")
-    Out.debug(s"\tRigid Positive: ${rigidPositive.size}")
-    Out.debug(s"\tRigid Negative: ${rigidNegative.size}")
+    Out.debug(s"\tFlex: ${flex.size}")
+    Out.debug(s"\tRigid: ${rigid.size}")
     Out.debug(s"\tRigid Index Keys: ${rigidIndex.keys.size}")
   }
 }
@@ -132,7 +119,7 @@ object BlockedClauseElimination extends CalculusRule {
     * @param C clause one
     * @param blockingLit potential blocking lit
     * @param D partner clause
-    * @param partners literals potentially unifiable with `blockingLit` e.g. have the same head symbol and are all patterns
+    * @param partners literals potentially unifiable with `blockingLit` e.g. have the same head symbol of flex-head and are all patterns
     * @param sig
     * @return true if `blockingLit` is blocking C rel. to D
     */
@@ -143,11 +130,17 @@ object BlockedClauseElimination extends CalculusRule {
     val D_lifted = D.substitute(Subst.shift(maxFree))
 
     val blocking_const = blockingLit.left
-    val partners_const = partners.map(_.substitute(Subst.shift(maxFree)).left)
+    val partners_const = partners.map(_.left.lift(maxFree))
 
     partners_const.forall(s => {
       var n=Set(s)
-      //PatternUnification.unifyAll(vargen, )
+
+      val v = PatternUnification.unifyAll(vargen.copy, ???)
+      val subst = v.head._1
+      val c = resolvent.substitute(subst._1, subst._2)
+      val c2 = leo.modules.calculus.Simp(c)
+      Clause.trivial(c2)
+      // find all complementary literals ()
 
       false
     })
@@ -216,17 +209,21 @@ object BlockedClauseElimination extends CalculusRule {
         c.lits.foreach{l =>
           if (PatternUnification.isPattern(l.left)) {
             queue.enqueue((c,l) -> rigidPatternIndex.numTotalPartners(l))
-            clauseLiteralPairs.foreach(cl => {
-              deactivations.deactivates(c, cl)
-            })
           }
         }
+        clauseLiteralPairs.foreach(cl => {
+          deactivations.deactivates(c, cl)
+        })
       }
       case None => {
         // Either add to queue, or deactivate if rigid non patterns with same head and opposite polarity are found.
         Out.debug(s"Found no clause containing non-pattern with flex head.")
         clauseLiteralPairs.foreach((cl: (Clause, Literal)) => {
-          val rnp = rigidNonPatterns((! cl._2.polarity, cl._2.left))
+          val rnp = if(cl._2.flexHead) {
+            // If flex I could potentially unify with rigid heads of both polarities.
+            rigidNonPatterns((cl._2.polarity, cl._2.left)) union rigidNonPatterns((! cl._2.polarity, cl._2.left))
+            }
+          else rigidNonPatterns((! cl._2.polarity, cl._2.left))
           if(rnp.isEmpty) {
             queue.enqueue(cl -> rigidPatternIndex.numTotalPartners(cl._2))
           }
@@ -248,8 +245,8 @@ object BlockedClauseElimination extends CalculusRule {
       val blocked = s.forall(cl => {
         val c2 = cl._1 //Partner Clause
         val ls = cl._2 //Partner Literal
-        val b = testValidityRes(c, l, c2, ls)
-        if(b) {
+        val b = testValidityRes(c, l, c2, ls) : Boolean
+        if(!b) {
           deactivations.deactivates(c2, (c,l))
           false
         }

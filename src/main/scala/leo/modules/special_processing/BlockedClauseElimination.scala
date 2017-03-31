@@ -2,7 +2,7 @@ package leo.modules.special_processing
 
 import leo.datastructures.Term.Bound
 import leo.datastructures._
-import leo.modules.HOLSignature.===
+import leo.modules.HOLSignature.{===, Not}
 import leo.modules.calculus.{CalculusRule, PatternUnification}
 import leo.modules.output.SZS_EquiSatisfiable
 import leo.modules.output.logger.Out
@@ -127,27 +127,115 @@ object BlockedClauseElimination extends CalculusRule {
     val resolvent = Clause(C.lits ++ D.lits)
     val vargen = leo.modules.calculus.freshVarGen(resolvent)
     val maxFree = C.maxImplicitlyBound
+
     val D_lifted = D.substitute(Subst.shift(maxFree))
+    val base = C.lits ++ D_lifted.lits
 
     val blocking_const = blockingLit.left
-    val partners_const = partners.map(_.left.lift(maxFree))
+    val blocking_const_inverse = Not(blocking_const)
+    val blocking_polarity = blockingLit.polarity
+    val blocking_flex = blocking_const.flexHead
 
-    partners_const.forall(s => {
-      var n=Set(s)
+    // saves all unification constraint pairs. First ist the lifted original literal from partners,
+    // second is the modified constraint.
+    var pairs = List[(Literal, (Term, Term))]()
 
-      val v = PatternUnification.unifyAll(vargen.copy, ???)
-      val subst = v.head._1
-      val c = resolvent.substitute(subst._1, subst._2)
-      val c2 = leo.modules.calculus.Simp(c)
-      Clause.trivial(c2)
-      // find all complementary literals ()
-
-      false
+    // collect all possible unification pairs
+    partners.foreach(p => {
+      val lifted_partner = p.substitute(Subst.shift(maxFree))
+      val pot = if (blocking_polarity != p.polarity) {
+          (blocking_const, lifted_partner.left)
+        }
+        else {
+          if(blocking_flex) {
+            if(lifted_partner.flexHead) { // both are flex
+              (blocking_const_inverse, lifted_partner.left)
+            } else {
+              (blocking_const, Not(lifted_partner.left))
+            }
+          } else {
+            (blocking_const_inverse, lifted_partner.left)
+          }
+        }
+      val v = PatternUnification.unifyAll(vargen.copy, Seq(pot))
+      // if v is empty the pair is not unifiable and will not be considered further.
+      if(v.nonEmpty) {pairs = (lifted_partner, pot)::pairs}
     })
 
-    //val resLit_lifted = resLit.substitute(Subst.shift(maxFree))
-    //val uni = PatternUnification.unify(vargen, blockingLit.left, resLit_lifted.left)
+    pairs.forall(p => {
+      val N=Set(p)
+      var v = PatternUnification.unifyAll(vargen.copy, N.map(_._2).toSeq)
+      var break = false
+      while(!break && v.nonEmpty) {
+        val comp = complementaryPairsInPartners(base, blockingLit, N.map(_._1), mutable.Set(pairs.map(_._1) : _*), v.head._1)
+        comp match {
+          case Some(lits_val) =>
+            if(lits_val.isEmpty) break = true
+            else {
+            pairs.foreach(p => {
+              if (lits_val.contains(p._1)) N.add(p)
+            })}
+          case _ =>
+            return false
+        }
+        if (!break) v = PatternUnification.unifyAll(vargen.copy, N.map(_._2).toSeq)
+      }
+      false
+    })
     true
+  }
+
+  /**
+    * Takes a unifying susbstitution
+    * @param base
+    * @param blocking
+    * @param used_partners
+    * @param all_partners
+    * @param subst
+    * @return None if Not Valid, Some empty sequence if Valid and complementairy pair contains a pair which does not contain a partner from all_partners, sequence
+    *         of literals otherwise.
+    */
+  private def complementaryPairsInPartners(base: Seq[Literal],
+                               blocking: Literal,
+                               used_partners: Set[Literal],
+                               all_partners: Set[Literal],
+                               subst: (PatternUnification.TermSubst, PatternUnification.TypeSubst)) : Option[Set[Literal]] = {
+    var isValid = false
+
+    var allCompPartners = true
+    val compPartner = Set.empty[Literal]
+
+    val polarityMap = mutable.HashMap.empty[(Boolean, Term), Literal]
+    base.foreach(l => {
+      if(l != blocking && !used_partners.contains(l)) {
+        val (res_pol, res_term) = l.substitute(subst._1, subst._2).left match {
+            case Not(t2) => (!l.polarity,t2)
+            case t => (l.polarity, t)
+          }
+        val partner = polarityMap.get((!res_pol, res_term))
+        partner match {
+          case Some(l2) =>
+            isValid = true
+            if(allCompPartners) {
+              (all_partners.contains(l), all_partners.contains(l2)) match  {
+                case (false, false) => allCompPartners = false
+                case (im1, im2) => {
+                  if (im1) compPartner += l
+                  if (im2) compPartner += l2
+                }
+              }
+            }
+          case None => ()
+        }
+        polarityMap.+=((res_pol, res_term) -> l)
+      }
+    })
+
+    if(!isValid) None
+    else {
+      if(!allCompPartners) Some(Set.empty)
+      else Some(compPartner)
+    }
   }
 
   /**
@@ -245,7 +333,7 @@ object BlockedClauseElimination extends CalculusRule {
       val blocked = s.forall(cl => {
         val c2 = cl._1 //Partner Clause
         val ls = cl._2 //Partner Literal
-        val b = testValidityRes(c, l, c2, ls) : Boolean
+        val b = isNotResOrValid(c, l, c2, ls) : Boolean
         if(!b) {
           deactivations.deactivates(c2, (c,l))
           false

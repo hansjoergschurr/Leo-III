@@ -248,12 +248,6 @@ object BlockedClauseElimination extends CalculusRule {
   def removeBlockedClauses(clauses : scala.collection.immutable.Set[AnnotatedClause])(implicit sig: Signature) : scala.collection.immutable.Set[AnnotatedClause] = {
     assert(isEqualityFree(clauses))
 
-    // Iterate once and separate
-    //  -> Pattern Literal: Create (C, L) pair and add to Index
-    //  -> Non-pattern with flex head: Killer can't have more then two!
-    //  -> Non-pattern with bound head: Create mapping (Head, Polarity) -> (C, L)
-    //    -> Deactivate (C, L) pattern pairs that have a head in the non-pattern mapping with foreign clause
-
     val rigidPatternIndex = new PatternIndex
     val rigidNonPatterns = new HashMap[(Boolean, Term), Set[(Clause, Literal)]] with MultiMap[(Boolean, Term), (Clause, Literal)]
 

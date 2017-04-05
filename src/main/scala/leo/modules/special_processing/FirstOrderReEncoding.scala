@@ -9,7 +9,7 @@ import leo.modules.output.{SZS_EquiSatisfiable, SuccessSZS}
 /**
   * Created by Hans-Jörg Schurr on 3/10/17.
   */
-object BooleanReEncoding extends CalculusRule {
+object FirstOrderReEncoding extends CalculusRule {
   override def name: String = "BRE"
   override def inferenceStatus: SuccessSZS = SZS_EquiSatisfiable
 
@@ -40,7 +40,7 @@ object BooleanReEncoding extends CalculusRule {
     }
     val fresh_c = clauses map { c =>
       val lits = c.cl.lits map wrap
-      AnnotatedClause(Clause(lits), c.role, ClauseAnnotation.InferredFrom(BooleanReEncoding, Seq(c, c_true, c_false)) , c.properties)
+      AnnotatedClause(Clause(lits), c.role, ClauseAnnotation.InferredFrom(FirstOrderReEncoding, Seq(c, c_true, c_false)) , c.properties)
     }
 
     fresh_c + c_true + c_false

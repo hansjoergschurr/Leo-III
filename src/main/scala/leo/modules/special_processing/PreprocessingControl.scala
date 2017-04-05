@@ -23,6 +23,6 @@ object PreprocessingControl {
 
   final def booleanReEncoding(clSet: Set[AnnotatedClause])(implicit  sig: Signature): Set[AnnotatedClause] = {
     val wrapEqs = Configuration.isSet("bre_dontWrapEqs")
-    BooleanReEncoding.reencodeBooleans(clSet, wrapEqs)
+    FirstOrderReEncoding.reencodeBooleans(clSet, wrapEqs)
   }
 }

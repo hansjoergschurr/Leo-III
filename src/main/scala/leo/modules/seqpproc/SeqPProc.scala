@@ -1,14 +1,13 @@
 package leo.modules.seqpproc
 
-import leo.Configuration
-import leo.Out
+import leo.{Configuration, Out}
 import leo.datastructures.ClauseAnnotation.InferredFrom
-import leo.datastructures.{AnnotatedClause, Clause, ClauseAnnotation, Literal, Signature, Term, addProp, tptp}
+import leo.datastructures._
 import leo.modules.calculus.NegateConjecture
-import leo.modules.output._
 import leo.modules.control.Control
 import leo.modules.control.externalProverControl.ExtProverControl
 import leo.modules.external.TptpResult
+import leo.modules.output._
 import leo.modules.parsers.Input
 import leo.modules.{SZSException, SZSOutput, Utility}
 
@@ -45,9 +44,9 @@ object SeqPProc {
     * (axioms etc.) is left unchanged for relevance filtering. Throws an error if multiple
     * conjectures are present or unknown role occurs. */
   final private def effectiveInput0(input: Seq[tptp.Commons.AnnotatedFormula], state: LocalState): (Seq[tptp.Commons.AnnotatedFormula], tptp.Commons.AnnotatedFormula) = {
-    import leo.modules.Utility.termToClause
-    import leo.datastructures.{Role_Definition, Role_Type, Role_Conjecture, Role_NegConjecture, Role_Unknown}
     import leo.datastructures.ClauseAnnotation._
+    import leo.datastructures.{Role_Conjecture, Role_Definition, Role_NegConjecture, Role_Type, Role_Unknown}
+    import leo.modules.Utility.termToClause
     var result: Seq[tptp.Commons.AnnotatedFormula] = Vector()
     var conj: tptp.Commons.AnnotatedFormula = null
     val inputIt = input.iterator
@@ -64,7 +63,6 @@ object SeqPProc {
               /* skip */
             } else {
               // Convert and negate and add conjecture
-              import leo.modules.calculus.CalculusRule
               Control.relevanceFilterAdd(formula)(state.signature)
               val translated = Input.processFormula(formula)(state.signature)
               val conjectureClause = AnnotatedClause(termToClause(translated._2), Role_Conjecture, FromFile(Configuration.PROBLEMFILE, translated._1), ClauseAnnotation.PropNoProp)
@@ -97,8 +95,8 @@ object SeqPProc {
     (result,conj)
   }
   final private def processInput(input: tptp.Commons.AnnotatedFormula, state: LocalState): AnnotatedClause = {
-    import leo.modules.Utility.termToClause
     import leo.datastructures.ClauseAnnotation.FromFile
+    import leo.modules.Utility.termToClause
     val formula = Input.processFormula(input)(state.signature)
     AnnotatedClause(termToClause(formula._2), formula._3, FromFile(Configuration.PROBLEMFILE, formula._1), ClauseAnnotation.PropNoProp)
   }
@@ -277,6 +275,12 @@ object SeqPProc {
         }
         if (preprocessIt.hasNext) Out.trace("--------------------")
       }
+
+      // bce
+      // sat based unit clause
+      // ure loop
+      // wraping
+
       Out.trace("## Preprocess END\n\n")
       assert(state.unprocessed.forall(cl => Clause.wellTyped(cl.cl)), s"Not well typed:\n\t${state.unprocessed.filterNot(cl => Clause.wellTyped(cl.cl)).map(_.pretty(sig)).mkString("\n\t")}")
       // Debug output

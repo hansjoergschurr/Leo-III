@@ -1,6 +1,7 @@
 package leo.datastructures
 
 import leo.modules.output.Output
+import leo.modules.proof_object.CompressProof
 
 
 /////////////////////////////////////////////
@@ -145,8 +146,10 @@ object AnnotatedClause {
   private var counter: Long = 0
 
   def apply(cl: Clause, r: Role, annotation: ClauseAnnotation, propFlag: ClauseAnnotation.ClauseProp): AnnotatedClause = {
-    counter += 1
-    AnnotatedClause(counter, cl, r, annotation, propFlag)
+    synchronized{counter += 1}  // TODO To heavy?
+    val ac = AnnotatedClause(counter, cl, r, annotation, propFlag)
+//    println(s">>>>>> ${ac.pretty}")
+    ac
   }
 
   def apply(cl: Clause, annotation: ClauseAnnotation, propFlag: ClauseAnnotation.ClauseProp = ClauseAnnotation.PropNoProp): AnnotatedClause =
@@ -199,7 +202,7 @@ object ClauseAnnotation {
         sb.append(",[status(")
         sb.append(rule.inferenceStatus.pretty.toLowerCase)
         sb.append(")]")
-        if(info != null) sb.append(s":[${info.apply}]")
+        if(info != null && info.apply() != "") remainingBrackets.insert(0, s":[${info.apply}]")
         sb.append(", ")
       }
       sb.append(annotation.pretty)

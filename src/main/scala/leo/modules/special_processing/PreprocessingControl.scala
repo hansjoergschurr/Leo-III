@@ -21,8 +21,8 @@ object PreprocessingControl {
     BlockedClauseElimination.removeBlockedClauses(clSet)
   }
 
-  final def booleanReEncoding(clSet: Set[AnnotatedClause])(implicit  sig: Signature): Set[AnnotatedClause] = {
-    val wrapEqs = Configuration.isSet("bre_dontWrapEqs")
-    FirstOrderReEncoding.reencodeBooleans(clSet, wrapEqs)
+  final def firstOrderReEncoding(clSet: Set[AnnotatedClause])(implicit sig: Signature): Set[AnnotatedClause] = {
+    val wrapEqs = Configuration.isSet("fre_dontWrapEqs")
+    FirstOrderReEncoding.reencodeBooleans(clSet, !wrapEqs)
   }
 }

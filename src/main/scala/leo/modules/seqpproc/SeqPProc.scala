@@ -1,6 +1,5 @@
 package leo.modules.seqpproc
 
-import leo.{Configuration, Out}
 import leo.datastructures.ClauseAnnotation.InferredFrom
 import leo.datastructures._
 import leo.modules.calculus.NegateConjecture
@@ -10,6 +9,7 @@ import leo.modules.external.TptpResult
 import leo.modules.output._
 import leo.modules.parsers.Input
 import leo.modules.{SZSException, SZSOutput, Utility}
+import leo.{Configuration, Out}
 
 import scala.annotation.tailrec
 
@@ -229,7 +229,7 @@ object SeqPProc {
       Out.info(s"Type checking passed. Searching for refutation ...")
 
       // Preprocessing Conjecture
-      if (state.negConjecture != null) {
+      var result = if (state.negConjecture != null) {
         // Expand conj, Initialize indexes
         // We expand here already since we are interested in all symbols (possibly contained within defined symbols)
         Out.debug("## Preprocess Neg.Conjecture BEGIN")
@@ -238,23 +238,20 @@ object SeqPProc {
         state.defConjSymbols(simpNegConj)
         state.initUnprocessed()
         Control.initIndexes(simpNegConj +: remainingInput)
-        val result = preprocess(state, simpNegConj).filterNot(cw => Clause.trivial(cw.cl))
-        Out.debug(s"# Result:\n\t${
-          result.map {
-            _.pretty(sig)
-          }.mkString("\n\t")
-        }")
         Out.trace("## Preprocess Neg.Conjecture END")
-        state.addUnprocessed(result)
-        // Save initial pre-processed set as auxiliary set for ATP calls (if existent)
-        if (state.externalProvers.nonEmpty) {
-          state.addInitial(result)
-        }
+        preprocess(state, simpNegConj).filterNot(cw => Clause.trivial(cw.cl))
       } else {
         // Initialize indexes
         state.initUnprocessed()
         Control.initIndexes(remainingInput)
+        Set.empty[AnnotatedClause]
       }
+
+      Out.debug(s"# Result:\n\t${
+        result.map {
+          _.pretty(sig)
+        }.mkString("\n\t")
+      }")
 
       // Preprocessing
       Out.debug("## Preprocess BEGIN")
@@ -270,16 +267,32 @@ object SeqPProc {
         }")
         val preprocessed = processed.filterNot(cw => Clause.trivial(cw.cl))
         state.addUnprocessed(preprocessed)
-        if (state.externalProvers.nonEmpty) {
-          state.addInitial(preprocessed)
-        }
+        result = result.union(preprocessed)
         if (preprocessIt.hasNext) Out.trace("--------------------")
       }
 
-      // bce
-      // sat based unit clause
-      // ure loop
-      // wraping
+      if(Configuration.isSet("bce_activate")){
+        Out.debug("## Blocked Clause Elimination")
+        result = Control.blockedClauseElimination(result)
+      }
+      if(Configuration.isSet("sce_activate")){
+        Out.debug("## SAT based constant extraction")
+        result = result.union(Control.satBasedUnitClauses(result))
+      }
+      if(Configuration.isSet("ure_activate")){
+        Out.debug("## Universal reduction")
+        result = result.union(Control.universalReduction(result))
+      }
+      if(Configuration.isSet("fre_activate")){
+        Out.debug("## First-order Re-encoding")
+        result = result.union(Control.firstOrderReEncoding(result))
+      }
+
+      // Save initial pre-processed set as auxiliary set for ATP calls (if existent)
+      if (state.externalProvers.nonEmpty) {
+        state.addInitial(result)
+      }
+      state.addUnprocessed(result)
 
       Out.trace("## Preprocess END\n\n")
       assert(state.unprocessed.forall(cl => Clause.wellTyped(cl.cl)), s"Not well typed:\n\t${state.unprocessed.filterNot(cl => Clause.wellTyped(cl.cl)).map(_.pretty(sig)).mkString("\n\t")}")

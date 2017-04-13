@@ -6,6 +6,7 @@ package leo.modules.special_processing
 
 import leo.Configuration
 import leo.datastructures.{AnnotatedClause, Signature}
+import leo.modules.output.logger.Out
 
 object PreprocessingControl {
   final def satBasedUnitClauses(clSet: Set[AnnotatedClause])(implicit sig: Signature): Set[AnnotatedClause] = {
@@ -17,8 +18,12 @@ object PreprocessingControl {
   }
 
   final def blockedClauseElimination(clSet: Set[AnnotatedClause])(implicit  sig: Signature): Set[AnnotatedClause] = {
-    assert(BlockedClauseElimination.isEqualityFree(clSet))
-    BlockedClauseElimination.removeBlockedClauses(clSet)
+    if(BlockedClauseElimination.isEqualityFree(clSet))
+      BlockedClauseElimination.removeBlockedClauses(clSet)
+    else {
+      Out.debug("Problem not equality free. Skipping Blocked Clause Elimination")
+      clSet
+    }
   }
 
   final def firstOrderReEncoding(clSet: Set[AnnotatedClause])(implicit sig: Signature): Set[AnnotatedClause] = {

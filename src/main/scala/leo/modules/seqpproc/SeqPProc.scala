@@ -281,11 +281,11 @@ object SeqPProc {
       }
       if(Configuration.isSet("ure_activate")){
         Out.debug("## Universal reduction")
-        result = result.union(Control.universalReduction(result))
+        result = Control.universalReduction(result)
       }
       if(Configuration.isSet("fre_activate")){
         Out.debug("## First-order Re-encoding")
-        result = result.union(Control.firstOrderReEncoding(result))
+        result = Control.firstOrderReEncoding(result)
       }
 
       // Save initial pre-processed set as auxiliary set for ATP calls (if existent)

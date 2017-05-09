@@ -279,21 +279,21 @@ object SeqPProc {
       if(Configuration.isSet("sce_activate")){
         Out.debug("## SAT based constant extraction")
         result = result.union(Control.satBasedUnitClauses(result))
-      }*/
-      //if(Configuration.isSet("ure_activate")){
-      if(true){
+      }
+      if(Configuration.isSet("ure_activate")){
         Out.debug("## Universal reduction")
-        val t = System.nanoTime()
         result = Control.universalReduction(result)
+      }*/
+
+      if(true) {
+      //if(Configuration.isSet("fre_activate")){
+        Out.debug("## First-order Re-encoding")
+        val t = System.nanoTime()
+        result = Control.firstOrderReEncoding(result)
         val dt = (System.nanoTime() - t)/(1000.0*1000.0) // Convert to ms
         Out.output(s"% URE Time $dt")
         assert(false)
       }
-      /*
-      if(Configuration.isSet("fre_activate")){
-        Out.debug("## First-order Re-encoding")
-        result = Control.firstOrderReEncoding(result)
-      }*/
 
       // Save initial pre-processed set as auxiliary set for ATP calls (if existent)
       if (state.externalProvers.nonEmpty) {

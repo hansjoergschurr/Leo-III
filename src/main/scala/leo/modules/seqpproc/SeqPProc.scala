@@ -271,6 +271,7 @@ object SeqPProc {
         if (preprocessIt.hasNext) Out.trace("--------------------")
       }
 
+      /*
       if(Configuration.isSet("bce_activate")){
         Out.debug("## Blocked Clause Elimination")
         result = Control.blockedClauseElimination(result)
@@ -278,15 +279,21 @@ object SeqPProc {
       if(Configuration.isSet("sce_activate")){
         Out.debug("## SAT based constant extraction")
         result = result.union(Control.satBasedUnitClauses(result))
-      }
-      if(Configuration.isSet("ure_activate")){
+      }*/
+      //if(Configuration.isSet("ure_activate")){
+      if(true){
         Out.debug("## Universal reduction")
+        val t = System.nanoTime()
         result = Control.universalReduction(result)
+        val dt = (System.nanoTime() - t)/(1000.0*1000.0) // Convert to ms
+        Out.output(s"% URE Time $dt")
+        assert(false)
       }
+      /*
       if(Configuration.isSet("fre_activate")){
         Out.debug("## First-order Re-encoding")
         result = Control.firstOrderReEncoding(result)
-      }
+      }*/
 
       // Save initial pre-processed set as auxiliary set for ATP calls (if existent)
       if (state.externalProvers.nonEmpty) {

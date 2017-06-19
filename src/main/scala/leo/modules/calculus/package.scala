@@ -1,6 +1,6 @@
 package leo.modules
 
-import leo.datastructures.{Type, Term, Kind, Clause, Signature, Subst}
+import leo.datastructures.{Type, Term, Literal, Kind, Clause, Signature, Subst}
 import leo.modules.output.SuccessSZS
 
 /**
@@ -132,7 +132,7 @@ package object calculus {
     result
   }
   final def skType(tyFvs: Seq[Int])(implicit sig: Signature): Type = {
-    val freshTypeOp: Signature#Key = sig.freshSkolemTypeConst(mkPolyKindAbstraction(tyFvs.size))
+    val freshTypeOp: Signature.Key = sig.freshSkolemTypeConst(mkPolyKindAbstraction(tyFvs.size))
     Type.mkType(freshTypeOp, tyFvs.map(Type.mkVarType))
   }
 
@@ -253,4 +253,8 @@ package object calculus {
     val fvs = cl.implicitlyBound
     fvs.size == fvs.toSet.size
   }
+
+  @inline final def isPattern(t: Term): Boolean = PatternUnification.isPattern(t)
+  @inline final def isPattern(l: Literal): Boolean = isPattern(l.left) && isPattern(l.right)
+  @inline final def isPattern(cl: Clause): Boolean = cl.lits.forall(isPattern)
 }

@@ -1,8 +1,6 @@
 package leo.datastructures
 
 import leo.modules.output.Output
-import leo.modules.proof_object.CompressProof
-
 
 /////////////////////////////////////////////
 // Collection of potentially globally used
@@ -219,7 +217,7 @@ object ClauseAnnotation {
     final def parents = Seq.empty
   }
   case class FromFile(fileName: String, formulaName: String) extends ClauseAnnotation {
-    final def pretty = s"file('$fileName',$formulaName)"
+    final def pretty = s"file('$fileName',${leo.modules.output.tptpEscapeName(formulaName)})"
     final val fromRule: CalculusRule = null
     final def parents = Seq.empty
   }

@@ -1,27 +1,28 @@
-package leo.modules.seqpproc
+package leo.modules.prover
 
+import leo.Out
 import leo.datastructures._
-import leo.modules.output.{SZS_Unknown, StatusSZS}
-import leo.modules.external.TptpProver
+import leo.modules.{FVState, FVStateImpl, GeneralState, GeneralStateImp}
 
 /**
   * Created by lex on 20.02.16.
   */
-trait State[T <: ClauseProxy] extends Pretty with StateStatistics {
-  def conjecture: T
-  def negConjecture: T
-  def symbolsInConjecture: Set[Signature#Key]
-  def setConjecture(conj: T): Unit
-  def setNegConjecture(negConj: T): Unit
+trait State[T <: ClauseProxy] extends FVState[T] with StateStatistics {
+//  Moved to general State
+//  def copy: State[T]
+//
+//  def conjecture: T
+//  def negConjecture: T
+//  def symbolsInConjecture: Set[Signature.Key]
+//  def defConjSymbols(negConj: T): Unit
+//  def setConjecture(conj: T): Unit
+//  def setNegConjecture(negConj: T): Unit
+//
+//  def signature: Signature
 
-  def signature: Signature
-  def szsStatus: StatusSZS
-  def setSZSStatus(szs: StatusSZS): Unit
+//  def runStrategy: RunStrategy
+//  def setRunStrategy(runStrategy: RunStrategy): Unit
 
-  def isPolymorphic: Boolean
-  def setPolymorphic: Unit
-
-  def defConjSymbols(negConj: T): Unit
   def initUnprocessed(): Unit
   def unprocessedLeft: Boolean
   def unprocessed: Set[T]
@@ -43,13 +44,7 @@ trait State[T <: ClauseProxy] extends Pretty with StateStatistics {
   def choiceFunctions: Map[Type, Set[Term]]
   final def choiceFunctions(ty: Type): Set[Term] = choiceFunctions.getOrElse(ty, Set())
 
-  def setDerivationClause(cl: T): Unit
-  def derivationClause: Option[T]
-
-  def addInitial(cls: Set[T]): Unit
-  def initialProblem: Set[T]
-  def externalProvers: Set[TptpProver[T]]
-  def addExternalProver(prover: TptpProver[T]): Unit
+  def copy : State[T]
 }
 
 trait StateStatistics {
@@ -79,49 +74,42 @@ trait StateStatistics {
 }
 
 object State {
-  def fresh[T <: ClauseProxy](sig: Signature): State[T] = new StateImpl[T](SZS_Unknown, sig)
+  def fresh[T <: ClauseProxy](sig: Signature): State[T] = new StateImpl[T](sig)
 }
 
-protected[seqpproc] class StateImpl[T <: ClauseProxy](initSZS: StatusSZS, initSignature: Signature) extends State[T] {
-  private var conjecture0: T = _
-  private var negConjecture0: T = _
-  private var current_szs = initSZS
+protected[prover] class StateImpl[T <: ClauseProxy](initSignature: Signature) extends FVStateImpl[T](initSignature) with State[T]{
   private var current_processed: Set[T] = Set()
   private var current_rewriterules: Set[T] = Set()
   private var current_nonRewriteUnits: Set[T] = Set()
-  private var derivationCl: Option[T] = None
-  private var current_externalProvers: Set[TptpProver[T]] = Set()
+
 
   private final val sig: Signature = initSignature
   private final val mpq: MultiPriorityQueue[T] = MultiPriorityQueue.empty
 
-  private var symbolsInConjecture0: Set[Signature#Key] = Set.empty
-  final def conjecture: T = conjecture0
-  final def setConjecture(conj: T): Unit = {conjecture0 = conj }
-  final def negConjecture: T = negConjecture0
-  final def setNegConjecture(negConj: T): Unit = negConjecture0 = negConj
-  final def symbolsInConjecture: Set[Signature#Key] = symbolsInConjecture0
-
-  final def signature: Signature = sig
-  final def szsStatus: StatusSZS = current_szs
-  final def setSZSStatus(szs: StatusSZS): Unit =  {current_szs = szs}
-
-  private var poly: Boolean = false
-  final def isPolymorphic: Boolean = poly
-  final def setPolymorphic: Unit = {poly = true}
-
-  final def defConjSymbols(negConj: T): Unit = {
-    assert(Clause.unit(negConj.cl))
-    val lit = negConj.cl.lits.head
-    assert(!lit.equational)
-    val term = lit.left
-    symbolsInConjecture0 = term.symbols.distinct intersect signature.allUserConstants
-    leo.Out.trace(s"Set Symbols in conjecture: " +
-      s"${symbolsInConjecture0.map(signature(_).name).mkString(",")}")
+  override final def copy: State[T] = {
+    val state = new StateImpl[T](initSignature.copy)
+    state.current_szs = current_szs
+    state.conjecture0 = conjecture0
+    state.negConjecture0 = negConjecture0
+    state.current_processed = current_processed
+    state.current_rewriterules = current_rewriterules
+    state.current_nonRewriteUnits = current_nonRewriteUnits
+    state.derivationCl = derivationCl
+    state.current_externalProvers = current_externalProvers
+    state.runStrategy0 = runStrategy0
+    state.symbolsInConjecture0 = symbolsInConjecture0
+    state.choiceFunctions0 = choiceFunctions0
+    state.initialProblem0 = initialProblem0
+    state.poly = poly
+    state
   }
+
+  override final def copyGeneral : GeneralState[T] = copy
+  override def copyFVState: FVState[T] = copy
+
   final def initUnprocessed(): Unit = {
     import leo.datastructures.ClauseProxyOrderings._
-    val conjSymbols: Set[Signature#Key] = symbolsInConjecture0
+    val conjSymbols: Set[Signature.Key] = symbolsInConjecture0
     mpq.addPriority(litCount_conjRelSymb(conjSymbols, 0.005f, 100, 50).asInstanceOf[Ordering[T]])
     mpq.addPriority(goals_SymbWeight(100,20).asInstanceOf[Ordering[T]])
     mpq.addPriority(goals_litCount_SymbWeight(100,20).asInstanceOf[Ordering[T]])
@@ -140,9 +128,12 @@ protected[seqpproc] class StateImpl[T <: ClauseProxy](initSZS: StatusSZS, initSi
   private var cur_weight = 0
   final def nextUnprocessed: T = {
     leo.Out.trace(s"[###] Selecting with priority $cur_prio: element $cur_weight")
-    if (cur_weight >= prio_weights(cur_prio)) {
+    leo.Out.trace(s"[###] mpq.priorities ${mpq.priorities}")
+    if (cur_weight > prio_weights(cur_prio)-1) {
+      leo.Out.trace(s"[###] limit exceeded (limit: ${prio_weights(cur_prio)}) (cur_weight: ${cur_weight})")
       cur_weight = 0
       cur_prio = (cur_prio + 1) % mpq.priorities
+      leo.Out.trace(s"[###] cur_prio set to ${cur_prio}")
     }
     val result = mpq.dequeue(cur_prio)
     cur_weight = cur_weight+1
@@ -166,27 +157,18 @@ protected[seqpproc] class StateImpl[T <: ClauseProxy](initSZS: StatusSZS, initSi
     current_nonRewriteUnits = current_nonRewriteUnits diff cls
   }
 
-
   private var choiceFunctions0: Map[Type, Set[Term]] = Map()
   final def addChoiceFunction(f: Term): Unit = {
-    if (choiceFunctions0.isDefinedAt(f.ty)) {
-      choiceFunctions0 = choiceFunctions0 + ((f.ty, choiceFunctions0(f.ty) + f))
-    } else choiceFunctions0 = choiceFunctions0 + ((f.ty, Set(f)))
+    val choiceType = f.ty._funDomainType._funDomainType
+    if (choiceFunctions0.isDefinedAt(choiceType)) {
+      choiceFunctions0 = choiceFunctions0 + ((choiceType, choiceFunctions0(choiceType) + f))
+    } else choiceFunctions0 = choiceFunctions0 + ((choiceType, Set(f)))
+    val meta = sig(Term.Symbol.unapply(f).get)
+    meta.updateProp(meta.flag | Signature.PropChoice)
   }
   final def choiceFunctions: Map[Type,Set[Term]] = choiceFunctions0
   final def choiceFunctionCount: Int = {choiceFunctions0.map {case (k,v) => v.size}.sum}
 
-  final def setDerivationClause(cl: T): Unit = {derivationCl = Some(cl)}
-  final def derivationClause: Option[T] = derivationCl
-
-  private var initialProblem0: Set[T] = Set()
-  final def addInitial(cls: Set[T]): Unit = {initialProblem0 = initialProblem0 union cls}
-  final def initialProblem: Set[T] = initialProblem0
-
-  final def externalProvers: Set[TptpProver[T]] = current_externalProvers
-  final def addExternalProver(prover: TptpProver[T]): Unit =  {
-    current_externalProvers = current_externalProvers + prover
-  }
   // Statistics
   private var generatedCount: Int = 0
   private var loopCount: Int = 0
@@ -223,5 +205,21 @@ protected[seqpproc] class StateImpl[T <: ClauseProxy](initSZS: StatusSZS, initSi
   final def incChoiceInstantiations(n: Int): Unit = {choiceInstantiations0 += n}
 
   // Pretty
-  final def pretty: String = s"State SZS: ${szsStatus.pretty}, #processed: $noProcessedCl"
+  override final def pretty: String = s"State SZS: ${szsStatus.pretty}, #processed: $noProcessedCl"
+}
+
+class FVIndex {
+  import leo.modules.indexing.{CFF, FVIndex}
+
+  val maxFeatures: Int = 100
+  var initialized = false
+  var features: Seq[CFF] = Vector.empty
+  var index = FVIndex()
+  def clauseFeatures: Seq[CFF] = features
+
+  protected[modules] final def reset(): Unit = {
+    initialized = false
+    features = Vector.empty
+    index = FVIndex()
+  }
 }

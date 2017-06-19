@@ -181,7 +181,7 @@ package object datastructures {
   /////////////////////
 
   trait Precedence {
-    type Const = Signature#Key
+    type Const = Signature.Key
     def compare(x: Const, y: Const)(implicit sig: Signature): CMP_Result
     def gt(x: Const, y: Const)(implicit sig: Signature): Boolean = compare(x,y)(sig) == CMP_GT
     def ge(x: Const, y: Const)(implicit sig: Signature): Boolean = compare(x,y)(sig) == CMP_GT || compare(x,y)(sig) == CMP_EQ
@@ -213,11 +213,6 @@ package object datastructures {
   object ClauseProxyOrderings {
     import impl.orderings._
 
-    final val fifo: ClauseProxyOrdering = CPO_FIFO
-    final val lex_weightAge: ClauseProxyOrdering = CPO_WeightAge
-    final val goalsfirst: ClauseProxyOrdering = CPO_GoalsFirst
-    final val nongoalsfirst: ClauseProxyOrdering = CPO_NonGoalsFirst
-
     // Since the orderings are used in a scala priorityqueue which prefers greater elemens, we need to reverse the
     // element orderings in the compounds
     final val oldest_first: ClauseProxyOrdering = CPO_OldestFirst.reverse
@@ -238,20 +233,20 @@ package object datastructures {
         CPO_SmallerFirst.reverse,
         new CPO_SymbolWeight(varWeight, symbWeight).reverse,
         oldest_first)
-    final def conjRelSymb(conjSymbols: Set[Signature#Key],
+    final def conjRelSymb(conjSymbols: Set[Signature.Key],
                                    conjSymbolFactor: Float,
                                    varWeight: Int, symbWeight: Int): ClauseProxyOrdering =
       Orderings.lexCombination(
         new CPO_ConjRelativeSymbolWeight(conjSymbols, conjSymbolFactor, varWeight, symbWeight).reverse,
         oldest_first)
-    final def litCount_conjRelSymb(conjSymbols: Set[Signature#Key],
+    final def litCount_conjRelSymb(conjSymbols: Set[Signature.Key],
                               conjSymbolFactor: Float,
                               varWeight: Int, symbWeight: Int): ClauseProxyOrdering =
       Orderings.lexCombination(
         CPO_SmallerFirst.reverse,
         new CPO_ConjRelativeSymbolWeight(conjSymbols, conjSymbolFactor, varWeight, symbWeight).reverse,
         oldest_first)
-    final def sos_conjRelSymb(conjSymbols: Set[Signature#Key],
+    final def sos_conjRelSymb(conjSymbols: Set[Signature.Key],
                               conjSymbolFactor: Float,
                               varWeight: Int, symbWeight: Int): ClauseProxyOrdering =
       Orderings.lexCombination(
@@ -293,11 +288,10 @@ package object datastructures {
     type T = SearchConfiguration[S]
     private val results: mutable.Queue[S] = new mutable.Queue[S]()
     protected var hd: Option[S] = None
-    protected val hdFunc: () => Option[S] = () => nextVal
     protected var terminal: Boolean = false
     protected def initDS(): Unit = {
       add(initial)
-      hd = hdFunc()
+      hd = nextVal
     }
 
     @tailrec
@@ -331,7 +325,7 @@ package object datastructures {
         def next: S = {
           if (hd.isEmpty && terminal) throw new NoSuchElementException("Stream is empty")
           else {
-            if (hd.isEmpty) {hd = hdFunc(); if (hd.isEmpty) {terminal = true;throw new NoSuchElementException("Stream is empty")} }
+            if (hd.isEmpty) {hd = nextVal; if (hd.isEmpty) {terminal = true;throw new NoSuchElementException("Stream is empty")} }
             val ret = hd.get
             hd = None
             ret
@@ -341,7 +335,7 @@ package object datastructures {
           if (hd.isEmpty) {
             if (terminal) false
             else {
-              hd = hdFunc()
+              hd = nextVal
               if (hd.isEmpty) {
                 terminal = true
                 false

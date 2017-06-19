@@ -157,14 +157,14 @@ object BlockedClauseElimination extends CalculusRule {
             (blocking_const_inverse, lifted_partner.left)
           }
         }
-      val v = PatternUnification.unifyAll(vargen.copy, Seq(pot))
+      val v = PatternUnification.unifyAll(vargen.copy, Seq(pot), -1)
       // if v is empty the pair is not unifiable and will not be considered further.
       if(v.nonEmpty) {pairs = (lifted_partner, pot)::pairs}
     })
 
     pairs.forall(p => {
       val N=Set(p)
-      var v = PatternUnification.unifyAll(vargen.copy, N.map(_._2).toSeq)
+      var v = PatternUnification.unifyAll(vargen.copy, N.map(_._2).toSeq, -1)
       var break = false
       while(!break && v.nonEmpty) {
         val comp = complementaryPairsInPartners(base, blockingLit, N.map(_._1), mutable.Set(pairs.map(_._1) : _*), v.head._1)
@@ -178,7 +178,7 @@ object BlockedClauseElimination extends CalculusRule {
           case _ =>
             return false
         }
-        if (!break) v = PatternUnification.unifyAll(vargen.copy, N.map(_._2).toSeq)
+        if (!break) v = PatternUnification.unifyAll(vargen.copy, N.map(_._2).toSeq, -1)
       }
       false
     })

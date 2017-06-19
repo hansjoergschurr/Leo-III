@@ -2,7 +2,6 @@ package leo.modules
 
 import leo.Configuration
 import leo.datastructures._
-import leo.modules.Utility.termToClause
 import leo.modules.output.SZS_UsageError
 import leo.modules.parsers.Input
 
@@ -10,7 +9,7 @@ import leo.modules.parsers.Input
   * Created by lex on 4/25/17.
   */
 object Normalization {
-  type Definition = (Signature#Key, Term)
+  type Definition = (Signature.Key, Term)
   type Axiom = Term
   type Conjecture = Term
 

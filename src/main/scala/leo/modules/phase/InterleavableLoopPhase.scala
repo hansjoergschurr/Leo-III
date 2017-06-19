@@ -1,18 +1,32 @@
 package leo.modules.phase
 import leo.{Configuration, Out}
 import leo.agents.{Agent, InterferingLoopAgent}
-import leo.datastructures.blackboard.Blackboard
+import leo.datastructures.blackboard.{Blackboard, Delta}
 import leo.datastructures._
 import leo.datastructures.blackboard.scheduler.Scheduler
-import leo.modules.interleavingproc.{BlackboardState, StateView}
-import leo.modules.seqpproc.SeqPProc
+import leo.modules.prover._
+import leo.modules.interleavingproc.{BlackboardState, SZSStatus, StateView}
 import leo.modules.control.Control
 import leo.modules.parsers.Input
+
+object InterleavableLoopPhase {
+  def endOn(d : Delta) : Boolean = {
+    d.inserts(SZSStatus).nonEmpty || d.updates(SZSStatus).nonEmpty
+  }
+}
 
 /**
   * Created by mwisnie on 9/28/16.
   */
-class InterleavableLoopPhase (interleavingLoop : InterferingLoopAgent[StateView[AnnotatedClause]], state : BlackboardState, sig : Signature, interleavingAgents : Agent*)(blackboard: Blackboard, scheduler: Scheduler) extends CompletePhase(blackboard, scheduler) {
+class InterleavableLoopPhase
+  (interleavingLoop : InterferingLoopAgent[StateView[AnnotatedClause]]
+   , state : BlackboardState
+   , sig : Signature
+   , interleavingAgents : Agent*)
+  (blackboard: Blackboard
+   , scheduler: Scheduler)
+  extends CompletePhase(blackboard, scheduler, InterleavableLoopPhase.endOn)
+{
   /**
     * Returns the name of the phase.
     *
@@ -48,9 +62,9 @@ class InterleavableLoopPhase (interleavingLoop : InterferingLoopAgent[StateView[
 
     // TODO Read external Provers / Implement external Provers
     val input2 = Input.parseProblem(Configuration.PROBLEMFILE)
-    val remainingInput = SeqPProc.effectiveInput(input2, state.state)
+    val remainingInput = effectiveInput(input2, state.state)
     // Typechecking: Throws and exception if not well-typed
-    SeqPProc.typeCheck(remainingInput, state.state)
+    typeCheck(remainingInput, state.state)
 
     if (state.state.negConjecture != null) {
       // Expand conj, Initialize indexes
@@ -60,8 +74,8 @@ class InterleavableLoopPhase (interleavingLoop : InterferingLoopAgent[StateView[
       val simpNegConj = Control.expandDefinitions(state.state.negConjecture)
       state.state.defConjSymbols(simpNegConj)
       state.state.initUnprocessed()
-      Control.initIndexes(simpNegConj +: remainingInput)
-      val result = SeqPProc.preprocess(state.state, simpNegConj).filterNot(cw => Clause.trivial(cw.cl))
+      Control.initIndexes(simpNegConj +: remainingInput)(state.state)
+      val result = SeqLoop.preprocess(state.state, simpNegConj).filterNot(cw => Clause.trivial(cw.cl))
       Out.debug(s"# Result:\n\t${
         result.map {
           _.pretty(sig)
@@ -76,7 +90,7 @@ class InterleavableLoopPhase (interleavingLoop : InterferingLoopAgent[StateView[
     } else {
       // Initialize indexes
       state.state.initUnprocessed()
-      Control.initIndexes(remainingInput)
+      Control.initIndexes(remainingInput)(state.state)
     }
 
     // Preprocessing
@@ -85,7 +99,7 @@ class InterleavableLoopPhase (interleavingLoop : InterferingLoopAgent[StateView[
     while (preprocessIt.hasNext) {
       val cur = preprocessIt.next()
       Out.trace(s"# Process: ${cur.pretty(sig)}")
-      val processed = SeqPProc.preprocess(state.state, cur)
+      val processed = SeqLoop.preprocess(state.state, cur)
       Out.debug(s"# Result:\n\t${
         processed.map {
           _.pretty(sig)

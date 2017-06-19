@@ -58,7 +58,7 @@ trait Term extends Pretty with Prettier {
   /** Exhaustively expands all symbols except for those in `symbs` which are
     * defined by its definitions.
     * This may not terminate for recursively defined symbols. */
-  def δ_expand_upTo(symbs: Set[Signature#Key])(implicit sig: Signature): Term
+  def δ_expand_upTo(symbs: Set[Signature.Key])(implicit sig: Signature): Term
 
   //////////////////////////
   // Queries on terms
@@ -82,13 +82,13 @@ trait Term extends Pretty with Prettier {
   def headSymbolDepth: Int
   def size: Int
 
-  def symbols: Multiset[Signature#Key]
+  def symbols: Multiset[Signature.Key]
   final def symbolsOfType(ty: Type)(implicit sig: Signature) = {
     symbols.filter({i => sig(i)._ty == ty})
   }
   // Functions for FV-Indexing
-  def fvi_symbolFreqOf(symbol: Signature#Key): Int
-  def fvi_symbolDepthOf(symbol: Signature#Key): Int
+  def fvi_symbolFreqOf(symbol: Signature.Key): Int
+  def fvi_symbolDepthOf(symbol: Signature.Key): Int
 
   // Substitutions and replacements
   /** Replace every occurrence of `what` in `this` by `by`. */
@@ -99,8 +99,8 @@ trait Term extends Pretty with Prettier {
     * I.e. each free variable `i` (NOT meta-vars!) occurring within `this` is replaced by `subst(i)`,
     * The term is then beta normalized */
   def substitute(termSubst: Subst, typeSubst: Subst = Subst.id): Term = closure(termSubst, typeSubst).betaNormalize
-  def termSubst(termSubst: Subst): Term = closure(termSubst, Subst.id).betaNormalize
-  def typeSubst(typeSubst: Subst): Term = closure(Subst.id, typeSubst).betaNormalize
+  def termSubst(termSubst: Subst): Term = if (termSubst == Subst.id) this else closure(termSubst, Subst.id).betaNormalize
+  def typeSubst(typeSubst: Subst): Term = if (typeSubst == Subst.id) this else closure(Subst.id, typeSubst).betaNormalize
 //  /** Apply type substitution `tySubst` to underlying term. */
 //  def tySubstitute(tySubst: Subst): Term = this.tyClosure(tySubst).betaNormalize
   /** Apply a shifting substitution by `by`, i.e. return this.substitute(Subst.shift(by)).betanormalize*/
@@ -151,8 +151,8 @@ object Term extends TermBank {
   import impl.TermImpl
 
   // Factory method delegation
-  final def mkAtom(id: Signature#Key)(implicit sig: Signature): Term = TermImpl.mkAtom(id)(sig)
-  final def mkAtom(id: Signature#Key, ty: Type): Term = TermImpl.mkAtom(id,ty)
+  final def mkAtom(id: Signature.Key)(implicit sig: Signature): Term = TermImpl.mkAtom(id)(sig)
+  final def mkAtom(id: Signature.Key, ty: Type): Term = TermImpl.mkAtom(id,ty)
   final def mkBound(t: Type, scope: Int): Term = TermImpl.mkBound(t,scope)
   final def mkTermApp(func: Term, arg: Term): Term = TermImpl.mkTermApp(func, arg)
   final def mkTermApp(func: Term, args: Seq[Term]): Term = TermImpl.mkTermApp(func, args)
@@ -165,7 +165,6 @@ object Term extends TermBank {
   // Term bank method delegation
   final val local = TermImpl.local
   final def insert(term: Term): Term = TermImpl.insert(term)
-  final def contains(term: Term): Boolean = TermImpl.contains(term)
   final def reset(): Unit = TermImpl.reset()
 
   // Utility
@@ -192,11 +191,6 @@ object Term extends TermBank {
   final implicit def intsToBoundVar(in: (Int, Int)): Term = mkBound(in._2,in._1)
 
 
-  // Legacy functions type types for statistics, like to be reused sometime
-  type TermBankStatistics = (Int, Int, Int, Int, Int, Int, Map[Int, Int])
-  final def statistics: TermBankStatistics = TermImpl.statistics
-
-
   //////////////////////////////////////////
   // Patterns for term structural matching
   //////////////////////////////////////////
@@ -221,7 +215,7 @@ object Term extends TermBank {
    * }
    * }}}
    */
-  object Symbol { final def unapply(t: Term): Option[Signature#Key] = TermImpl.symbolMatcher(t) }
+  object Symbol { final def unapply(t: Term): Option[Signature.Key] = TermImpl.symbolMatcher(t) }
 
   /**
    * Pattern for matching a general application (i.e. terms of form `(h ∙ S)`), where

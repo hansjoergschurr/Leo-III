@@ -154,14 +154,14 @@ object PreUni extends AnyUni {
   final def canApply(l: Literal): Boolean = l.uni
 
   final def apply(vargen: FreshVarGen, uniLits: UniLits,
-                  otherLits: OtherLits)(implicit sig: Signature): Iterator[UniResult] = {
-    import leo.modules.Utility.myAssert
+                  otherLits: OtherLits, uniDepth: Int)(implicit sig: Signature): Iterator[UniResult] = {
+    import leo.modules.myAssert
     Out.trace(s"Unification on:\n\t${uniLits.map(eq => eq._1.pretty(sig) + " = " + eq._2.pretty(sig)).mkString("\n\t")}")
     myAssert(uniLits.forall{case (l,r) => Term.wellTyped(l) && Term.wellTyped(r) && l.ty == r.ty})
-    val result = HuetsPreUnification.unifyAll(vargen, uniLits).iterator
+    val result = HuetsPreUnification.unifyAll(vargen, uniLits, uniDepth).iterator
     result.map {case (subst, flexflex) =>
       val newLiteralsFromFlexFlex = flexflex.map(eq => Literal.mkNeg(eq._1, eq._2))
-      val updatedOtherLits = otherLits.map(_.substituteOrdered(subst._1, subst._2)(sig))
+      val updatedOtherLits = otherLits.map(_.substituteOrdered(subst._1, subst._2)(sig)) // FIXME this one is slow
       val resultClause = Clause(updatedOtherLits ++ newLiteralsFromFlexFlex)
       (resultClause, subst)
     }
@@ -176,10 +176,10 @@ object PatternUni extends AnyUni {
 
   final def apply(vargen: FreshVarGen, uniLits: UniLits,
                   otherLits: OtherLits)(implicit sig: Signature): Option[UniResult] = {
-    import leo.modules.Utility.myAssert
+    import leo.modules.myAssert
     Out.trace(s"Pattern unification on:\n\t${uniLits.map(eq => eq._1.pretty(sig) + " = " + eq._2.pretty(sig)).mkString("\n\t")}")
     myAssert(uniLits.forall{case (l,r) => Term.wellTyped(l) && Term.wellTyped(r) && l.ty == r.ty})
-    val result = PatternUnification.unifyAll(vargen, uniLits)
+    val result = PatternUnification.unifyAll(vargen, uniLits, -1) // depth is dont care
     if (result.isEmpty) {
       Out.debug(s"Pattern unification failed.")
       None
@@ -217,7 +217,7 @@ object Choice extends CalculusRule {
         witnessTerm match {
           case TermApp(prop, Seq(witness)) if prop.isVariable && witness.isVariable =>
             choiceTerm match {
-              case TermApp(`prop`, Seq(TermApp(f, Seq(`prop`)))) => Some(f)
+              case TermApp(`prop`, Seq(TermApp(f, Seq(arg)))) if arg.etaExpand == prop.etaExpand => Some(f)
               case _ => None
             }
           case _ => None
@@ -240,6 +240,7 @@ object Choice extends CalculusRule {
         val occ = leftOccIt.next()
         leo.Out.trace(s"[Choice Rule] Current occurence: ${occ.pretty(sig)}")
         val findResult = findChoice(occ, choiceFuns, leftOcc(occ).head)
+        if (findResult != null) leo.Out.trace(s"[Choice Rule] Taken: ${findResult.pretty(sig)}")
         if (findResult != null)
           result = result + findResult
       }
@@ -259,24 +260,25 @@ object Choice extends CalculusRule {
   private final def findChoice(occ: Term, choiceFuns: Map[Type, Set[Term]], occPos: Position): Term =
     findChoice0(occ, choiceFuns, occPos, 0)
 
-  @tailrec
+
   private final def findChoice0(occ: Term, choiceFuns: Map[Type, Set[Term]], occPos: Position, depth: Int): Term = {
-    import leo.datastructures.Term.{Symbol, Bound,TermApp, :::>}
+    import leo.datastructures.Term.{Symbol, Bound,TermApp}
+    import leo.modules.HOLSignature.{Choice => ChoiceSymb}
     occ match {
-      case TermApp(hd, args) if compatibleType(hd.ty) && args.nonEmpty && etaArgs(args.tail, depth) =>
+      case ChoiceSymb(arg) => arg
+      case TermApp(hd, args) if compatibleType(hd.ty) && args.size == 1 =>
         val arg = args.head
         hd match {
           case Bound(_,idx) if idx > occPos.abstractionCount+depth =>
             arg
-          case Symbol(_) => val choiceType =hd.ty._funDomainType._funDomainType
-            if (choiceFuns.contains(choiceType))
-              if (choiceFuns(choiceType).contains(hd))
-                arg
-              else null
-            else null
+          case Symbol(_) =>
+            // hd.ty = (a -> o) -> a
+            val choiceType =hd.ty._funDomainType._funDomainType
+            // choiceType = a
+            val choiceFuns0 = choiceFuns.getOrElse(choiceType, Set.empty)
+            if (choiceFuns0.contains(hd)) arg else null
           case _ => null/* skip */
         }
-      case _ :::> body => findChoice0(body, choiceFuns, occPos, depth+1)
       case _ => null/* skip */
     }
   }
@@ -316,6 +318,81 @@ object Choice extends CalculusRule {
     val lit2 = Literal.mkLit(Term.mkTermApp(term, Term.mkTermApp(choiceFun, term)).betaNormalize.etaExpand, true)
     Clause(Vector(lit1, lit2))
   }
+}
+
+object SolveFuncSpec extends CalculusRule {
+  import leo.datastructures.Term.{λ, mkBound}
+  import leo.modules.HOLSignature.{Choice => ε, Impl, &, ===}
+  import leo.modules.myAssert
+
+  final val name: String = "solveFuncSpec"
+  override final val inferenceStatus = SZS_Theorem
+
+  type Argument = Term
+  type Result = Term
+
+  /**
+    * Suppose we have a specification of a function F with
+    * {{{F(s11,s12,...,s1J) = t1,
+    * ...
+    * F(sN1,sN2,...,sNJ) = tN}}},
+    * represented as an input `((s_ij)_{1<=j<=J},t_i)_{1<=i<=N}`,
+    * return the term
+    * `λx_1....λ.x_J.ε(λy. ⋀_i<=N. (⋀_j<=J. x_j = s_ij) => y = t_i)`.
+    *
+    * This term represents the specfication as a choice-term.
+    *
+    * @param funTy The type of the function `F`
+    * @param spec The specification of the function `F`.
+    * @return A choice term representing a function with specification `spec`
+    */
+  final def apply(funTy: Type, spec: Seq[(Seq[Argument], Result)])
+                 (implicit sig: Signature): Term = {
+    assert(spec.nonEmpty)
+
+    val (paramTypes, resultType) = funTy.splitFunParamTypes
+    val paramCount = paramTypes.size
+    myAssert(spec.forall(s => s._1.size == paramCount))
+    myAssert(spec.forall(s => s._1.map(_.ty) == paramTypes))
+    myAssert(spec.forall(s => s._2.ty == resultType))
+    /* Result var is the y in `SOME y. p`, i.e.
+     * ε(λy.p). */
+    val resultVar: Term = mkBound(resultType, 1)
+    /* paramVar(i) is the i+1-th input variable for the term as in
+    * `λx_1....λxi...λx_J.ε(λy. ...)`, 0<=0<J */
+    def paramVar(i: Int): Term = mkBound(paramTypes(i), paramCount-i+1) // +1 b/c of y
+
+    val specIt = spec.iterator
+    /* Iteratively build-up `choiceTerm` */
+    var choiceTerm: Term = null
+    while (specIt.hasNext) {
+      val (args,res0) = specIt.next() // (sij_j,ti)
+      val res = res0.lift(paramCount+1)
+      val argsIt = args.iterator
+      var i = 0
+      var caseTerm: Term = null // a single input `⋀_j<=J. x_j = s_ij` for a fixed i
+      while (argsIt.hasNext) {
+        val arg0 = argsIt.next()
+        val arg = arg0.lift(paramCount+1)
+        if (caseTerm == null) {
+          caseTerm = ===(paramVar(i), arg)
+        } else {
+          caseTerm = &(caseTerm, ===(paramVar(i), arg))
+        }
+        i = i+1
+      }
+      val caseTerm0: Term = Impl(caseTerm, ===(resultVar,res))
+      if (choiceTerm == null) {
+        choiceTerm = caseTerm0
+      } else {
+        choiceTerm = &(choiceTerm, caseTerm0)
+      }
+    }
+    val result: Term = λ(paramTypes)(ε(λ(resultType)(choiceTerm)))
+    leo.Out.trace(s"[SolveFuncSpec] Result: ${result.pretty(sig)}")
+    result
+  }
+
 }
 
 ////////////////////////////////////////////////////////////////
@@ -442,7 +519,7 @@ object OrderedParamod extends CalculusRule {
     assert(intoClause.lits.isDefinedAt(intoIndex))
     assert(withClause.lits(withIndex).polarity)
     assert(!(withSide == Literal.rightSide) || !withClause.lits(withIndex).oriented || simulateResolution)
-    assert(!(intoSide == Literal.rightSide) || !intoClause.lits(intoIndex).oriented || simulateResolution)
+    // assert(!(intoSide == Literal.rightSide) || !intoClause.lits(intoIndex).oriented || simulateResolution)
 
     val withLiteral = withClause.lits(withIndex)
     val (toFind, replaceBy) = if (withSide == Literal.leftSide) (withLiteral.left,withLiteral.right) else (withLiteral.right,withLiteral.left)

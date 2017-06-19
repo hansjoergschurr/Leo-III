@@ -4,8 +4,8 @@ import leo.datastructures.blackboard.{DataStore, DataType, Delta}
 import leo.datastructures.{AnnotatedClause, Clause, Signature}
 import leo.modules.SZSException
 import leo.modules.output.{SZS_Error, StatusSZS}
-import leo.modules.seqpproc.State
 import leo.modules.control.Control
+import leo.modules.prover.State
 
 /**
   *
@@ -29,6 +29,9 @@ class BlackboardState(val state : State[AnnotatedClause]) extends DataStore {
     nextUnprocessed.get
   }
 
+
+  override def isEmpty: Boolean = synchronized(!state.unprocessedLeft && state.processed.isEmpty && !nextUnprocessedSet)
+
   def realeaseUnprocessed : Unit = {nextUnprocessedSet = false}
 
   @inline def hasNextUnprocessed : Boolean = synchronized {
@@ -39,8 +42,8 @@ class BlackboardState(val state : State[AnnotatedClause]) extends DataStore {
   override def clear(): Unit = {
     leo.Out.info("Could not clear the state. Not yet implemented.")
   }
-  override def all[T](t: DataType[T]): Set[T] = ???     // TODO implement
-  override def updateResult(r: Delta): Boolean = synchronized {
+  override def get[T](t: DataType[T]): Set[T] = ???     // TODO implement
+  override def updateResult(r: Delta): Delta = synchronized {
     val newUnprocessedSeq = r.inserts(UnprocessedClause)
     state.incGeneratedCl(newUnprocessedSeq.size)
     val newUnprocessed = newUnprocessedSeq.iterator
@@ -81,7 +84,7 @@ class BlackboardState(val state : State[AnnotatedClause]) extends DataStore {
       // Remove from processed set, from indexes etc.
       state.removeProcessed(subsumed)
       state.removeUnits(subsumed)
-      Control.removeFromIndex(subsumed)
+      Control.removeFromIndex(subsumed)(state)
       // Remove all direct descendants of clauses in `bachSubsumedClauses` from unprocessed
 //      val descendants = Control.descendants(subsumed)
 //      state.incDescendantsDeleted(descendants.size)
@@ -100,19 +103,16 @@ class BlackboardState(val state : State[AnnotatedClause]) extends DataStore {
       }
     }
 
-    // TODO Statistic
     val statistc = r.inserts(StatisticType).iterator
     if(statistc.nonEmpty){
-      val stat = statistc.next().asInstanceOf[Statistic]
-      // TODO do something with the statistic
+      val stat = statistc.next()
       state.incForwardSubsumedCl(stat.forwardSubsumedClauses)
       state.incBackwardSubsumedCl(stat.backwardSubsumedClauses)
       state.incFactor(stat.factorClauses)
       state.incGeneratedCl(stat.generatedClauses)
       state.incParamod(stat.paramodClauses)
-      // TODO checken, welche Fehlder überhaupt gefüllt sind um so etwas von der linearen suche zu verkleinern.
     }
-    true
+    r  // TODO construct a real delta. In this implementation not yet important
   }
 }
 

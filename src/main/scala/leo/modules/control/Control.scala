@@ -66,6 +66,13 @@ object Control {
   // Limited resource scheduling
   @inline final def defaultStrategy(timeout: Int): RunStrategy = schedulingControl.StrategyControl.defaultStrategy(timeout)
   @inline final def generateRunStrategies: Iterator[RunStrategy] = schedulingControl.StrategyControl.generateRunStrategies
+
+  // QBF inspired preprocessing
+  import leo.modules.special_processing.PreprocessingControl
+  @inline final def satBasedUnitClauses(clSet: Set[AnnotatedClause])(implicit sig: Signature): Set[AnnotatedClause] = PreprocessingControl.satBasedUnitClauses(clSet)(sig)
+  @inline final def universalReduction(clSet: Set[AnnotatedClause])(implicit sig: Signature): Set[AnnotatedClause] = PreprocessingControl.universalReduction(clSet)(sig)
+  @inline final def blockedClauseElimination(clSet: Set[AnnotatedClause])(implicit sig: Signature): Set[AnnotatedClause] = PreprocessingControl.blockedClauseElimination(clSet)(sig)
+  @inline final def firstOrderReEncoding(clSet: Set[AnnotatedClause])(implicit sig: Signature): Set[AnnotatedClause] = PreprocessingControl.firstOrderReEncoding(clSet)(sig)
 }
 
 /** Package collection control objects for inference rules.

@@ -146,7 +146,7 @@ object SeqLoop {
       val timeout = if (timeout0 == 0) Float.PositiveInfinity else timeout0
 
       // Preprocessing Conjecture
-      if (state.negConjecture != null) {
+      var result = if (state.negConjecture != null) {
         // Expand conj, Initialize indexes
         // We expand here already since we are interested in all symbols (possibly contained within defined symbols)
         Out.debug("## Preprocess Neg.Conjecture BEGIN")
@@ -155,23 +155,21 @@ object SeqLoop {
         state.defConjSymbols(simpNegConj)
         state.initUnprocessed()
         Control.initIndexes(simpNegConj +: input)
-        val result = preprocess(state, simpNegConj).filterNot(cw => Clause.trivial(cw.cl))
-        Out.debug(s"# Result:\n\t${
-          result.map {
-            _.pretty(sig)
-          }.mkString("\n\t")
-        }")
+        val res = preprocess(state, simpNegConj).filterNot(cw => Clause.trivial(cw.cl))
         Out.trace("## Preprocess Neg.Conjecture END")
-        state.addUnprocessed(result)
-        // Save initial pre-processed set as auxiliary set for ATP calls (if existent)
-        if (state.externalProvers.nonEmpty) {
-          state.addInitial(result)
-        }
+        res
       } else {
         // Initialize indexes
         state.initUnprocessed()
         Control.initIndexes(input)
+        Set.empty[AnnotatedClause]
       }
+
+      Out.debug(s"# Result:\n\t${
+        result.map {
+          _.pretty(sig)
+        }.mkString("\n\t")
+      }")
 
       // Preprocessing
       Out.debug("## Preprocess BEGIN")
@@ -186,14 +184,32 @@ object SeqLoop {
           }.mkString("\n\t")
         }")
         val preprocessed = processed.filterNot(cw => Clause.trivial(cw.cl))
-        state.addUnprocessed(preprocessed)
-        if (state.externalProvers.nonEmpty) {
-          state.addInitial(preprocessed)
-        }
+        result = result union preprocessed
         if (preprocessIt.hasNext) Out.trace("--------------------")
       }
 
-      // TODO: Add QBF prepro here
+      if(Configuration.isSet("bce_activate")){
+        Out.debug("## Blocked Clause Elimination")
+        result = Control.blockedClauseElimination(result)
+      }
+      if(Configuration.isSet("sce_activate")){
+        Out.debug("## SAT based constant extraction")
+        result = result.union(Control.satBasedUnitClauses(result))
+      }
+      if(Configuration.isSet("ure_activate")){
+        Out.debug("## Universal reduction")
+        result = Control.universalReduction(result)
+      }
+      if(Configuration.isSet("fre_activate")){
+        Out.debug("## First-order Re-encoding")
+        result = Control.firstOrderReEncoding(result)
+      }
+
+      // Save initial pre-processed set as auxiliary set for ATP calls (if existent)
+      state.addUnprocessed(result)
+      if (state.externalProvers.nonEmpty) {
+        state.addInitial(result)
+      }
 
       Out.trace("## Preprocess END\n\n")
       assert(state.unprocessed.forall(cl => Clause.wellTyped(cl.cl)), s"Not well typed:\n\t${state.unprocessed.filterNot(cl => Clause.wellTyped(cl.cl)).map(_.pretty(sig)).mkString("\n\t")}")

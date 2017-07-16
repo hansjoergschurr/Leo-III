@@ -65,6 +65,11 @@ package object datastructures {
   /////////////////////////////////
   // Ordering related library functions
   /////////////////////////////////
+
+  trait TermOrdering {
+    def compare(s: Term, t: Term)(implicit sig: Signature): CMP_Result
+  }
+
   type CMP_Result = Byte
   /** Comparison result: Equal */
   final val CMP_EQ: CMP_Result = 0.toByte
@@ -73,7 +78,7 @@ package object datastructures {
   /** Comparison result: Greater-than */
   final val CMP_GT: CMP_Result = 2.toByte
   /** Comparison result: Not-comparable (unknown) */
-  final val CMP_NC: CMP_Result = 3.toByte
+  final val CMP_NC: CMP_Result = 4.toByte
 
   /**
     * Collection of Ordering relations of terms, clauses, etc.
@@ -94,6 +99,13 @@ package object datastructures {
       if (x > y) CMP_GT
       else if (x < y) CMP_LT
       else CMP_EQ
+    }
+
+    final def pretty(x: CMP_Result): String = {
+      if (x == CMP_GT) "GT"
+      else if (x == CMP_LT) "LT"
+      else if (x == CMP_EQ) "EQ"
+      else "NC"
     }
 
     /** Return a (simple) ordering that is induced by a weighting. */
@@ -605,4 +617,26 @@ package object datastructures {
       else termArgs(args.tail)
     }
   }
+
+  /**
+    * Given a term `app`, if `app` is a application
+    * of the form {{{app = hd ∙ (arg1, ..., argn)}}},
+    * return all partial prefix-applications
+    * `Seq(hd ∙ (arg1), hd ∙ (arg1, arg2), ...., hd ∙ (arg1, ..., argn))`.
+    * If `app` is not an application, the result is the singleton list
+    * containing `app`.
+    */
+  final def prefixApplications(app: Term): Seq[Term] = {
+    if (app.isApp) {
+      import leo.datastructures.Term.∙
+      app match {
+         case hd ∙ args =>
+            val (tyArgs, termArgs) = leo.datastructures.partitionArgs(args)
+            val baseTerm = Term.mkTypeApp(hd, tyArgs)
+            termArgs.inits.map(arg => Term.mkTermApp(baseTerm, arg)).toSeq
+         case _ => Seq(app)
+      }
+    } else Seq(app)
+  }
+
 }

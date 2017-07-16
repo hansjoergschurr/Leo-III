@@ -1,7 +1,7 @@
 package leo.modules.control
 
 import leo.{Configuration, Out}
-import leo.datastructures.{AnnotatedClause, Signature}
+import leo.datastructures.{AnnotatedClause, Signature, Term, Type}
 import leo.modules.{FVState, GeneralState, myAssert}
 import leo.modules.prover.{RunStrategy, State}
 
@@ -22,8 +22,8 @@ object Control {
   @inline final def primsubst(cl: AnnotatedClause)(implicit state: LocalState): Set[AnnotatedClause] = inferenceControl.PrimSubstControl.primSubst(cl)(state)
   @inline final def unifyNewClauses(clSet: Set[AnnotatedClause])(implicit state: LocalState): Set[AnnotatedClause] = inferenceControl.UnificationControl.unifyNewClauses(clSet)(state)
   // simplification inferences / preprocessing
-  @inline final def cnf(cl: AnnotatedClause)(implicit sig: Signature): Set[AnnotatedClause] = inferenceControl.CNFControl.cnf(cl)(sig)
-  @inline final def cnfSet(cls: Set[AnnotatedClause])(implicit sig: Signature): Set[AnnotatedClause] = inferenceControl.CNFControl.cnfSet(cls)(sig)
+  @inline final def cnf(cl: AnnotatedClause)(implicit state: LocalState): Set[AnnotatedClause] = inferenceControl.CNFControl.cnf(cl)(state)
+  @inline final def cnfSet(cls: Set[AnnotatedClause])(implicit state: LocalState): Set[AnnotatedClause] = inferenceControl.CNFControl.cnfSet(cls)(state)
   @inline final def expandDefinitions(cl: AnnotatedClause)(implicit sig: Signature): AnnotatedClause = inferenceControl.SimplificationControl.expandDefinitions(cl)(sig)
   @inline final def miniscope(cl: AnnotatedClause)(implicit sig: Signature): AnnotatedClause = inferenceControl.SimplificationControl.miniscope(cl)(sig)
   @inline final def switchPolarity(cl: AnnotatedClause): AnnotatedClause = inferenceControl.SimplificationControl.switchPolarity(cl)
@@ -41,9 +41,14 @@ object Control {
   // AC detection
   @inline final def detectAC(cl: AnnotatedClause): Option[(Signature.Key, Boolean)] = inferenceControl.SimplificationControl.detectAC(cl)
   // Choice
-  @inline final def instantiateChoice(cl: AnnotatedClause)(implicit state: State[AnnotatedClause]): Set[AnnotatedClause] = inferenceControl.ChoiceControl.instantiateChoice(cl)(state)
-  @inline final def detectChoiceClause(cl: AnnotatedClause)(implicit state: State[AnnotatedClause]): Boolean = inferenceControl.ChoiceControl.detectChoiceClause(cl)(state)
+  @inline final def instantiateChoice(cl: AnnotatedClause)(implicit state: LocalState): Set[AnnotatedClause] = inferenceControl.ChoiceControl.instantiateChoice(cl)(state)
+  @inline final def detectChoiceClause(cl: AnnotatedClause)(implicit state: LocalState): Boolean = inferenceControl.ChoiceControl.detectChoiceClause(cl)(state)
   @inline final def guessFuncSpec(cls: Set[AnnotatedClause])(implicit state: LocalState): Set[AnnotatedClause] = inferenceControl.ChoiceControl.guessFuncSpec(cls)(state)
+  // Domain Constraints
+  @inline final def detectDomainConstraint(cl : AnnotatedClause)(implicit state : LocalState) : Option[(Type, Set[Term])] = inferenceControl.DomainConstraintInstanceControl.detectDomainConstraint(cl)
+  @inline final def instantiateDomainConstraint(cl : AnnotatedClause)(implicit state : LocalState) : Set[AnnotatedClause] = inferenceControl.DomainConstraintInstanceControl.instanciateDomain(cl)
+  @inline final def instantiateDomainConstraint(cl : Set[AnnotatedClause])(implicit state : LocalState) : Set[AnnotatedClause] = inferenceControl.DomainConstraintInstanceControl.instanciateDomain(cl)
+
   // Redundancy
   @inline final def redundant(cl: AnnotatedClause, processed: Set[AnnotatedClause])(implicit state: LocalFVState): Boolean = redundancyControl.RedundancyControl.redundant(cl, processed)
   @inline final def backwardSubsumptionTest(cl: AnnotatedClause, processed: Set[AnnotatedClause])(implicit state: LocalFVState): Set[AnnotatedClause] = redundancyControl.SubsumptionControl.testBackwardSubsumptionFVI(cl)
@@ -60,12 +65,15 @@ object Control {
   @inline final def getRelevantAxioms(input: Seq[leo.datastructures.tptp.Commons.AnnotatedFormula], conjecture: leo.datastructures.tptp.Commons.AnnotatedFormula)(implicit sig: Signature): Seq[leo.datastructures.tptp.Commons.AnnotatedFormula] = indexingControl.RelevanceFilterControl.getRelevantAxioms(input, conjecture)(sig)
   @inline final def relevanceFilterAdd(formula: leo.datastructures.tptp.Commons.AnnotatedFormula)(implicit sig: Signature): Unit = indexingControl.RelevanceFilterControl.relevanceFilterAdd(formula)(sig)
   // External prover call
+  @inline final def registerExtProver(provers: Seq[(String, String)])(implicit state: State[AnnotatedClause]): Unit =  externalProverControl.ExtProverControl.registerExtProver(provers)(state)
   @inline final def checkExternalResults(state: State[AnnotatedClause]): Seq[leo.modules.external.TptpResult[AnnotatedClause]] =  externalProverControl.ExtProverControl.checkExternalResults(state)
-  @inline final def submit(clauses: Set[AnnotatedClause], state: State[AnnotatedClause]): Unit = externalProverControl.ExtProverControl.submit(clauses, state)
+  @inline final def submit(clauses: Set[AnnotatedClause], state: State[AnnotatedClause], force: Boolean = false): Unit = externalProverControl.ExtProverControl.submit(clauses, state, force)
   @inline final def killExternals(): Unit = externalProverControl.ExtProverControl.killExternals()
   // Limited resource scheduling
-  @inline final def defaultStrategy(timeout: Int): RunStrategy = schedulingControl.StrategyControl.defaultStrategy(timeout)
-  @inline final def generateRunStrategies: Iterator[RunStrategy] = schedulingControl.StrategyControl.generateRunStrategies
+  type RunConfiguration = (RunStrategy, Int)
+  type RunSchedule = Iterable[RunConfiguration]
+  @inline final def defaultStrategy: RunStrategy = schedulingControl.StrategyControl.defaultStrategy
+  @inline final def generateRunStrategies(globalTimeout: Int, extraTime: Int = 0): RunSchedule = schedulingControl.StrategyControl.generateRunStrategies(globalTimeout, extraTime)
 
   // QBF inspired preprocessing
   import leo.modules.special_processing.PreprocessingControl
@@ -93,10 +101,10 @@ package inferenceControl {
   protected[modules] object CNFControl {
     import leo.datastructures.ClauseAnnotation.InferredFrom
 
-    private lazy val internalCNF: (AnnotatedClause, Signature) => Set[AnnotatedClause] = if (Configuration.RENAMING_SET) cnf2 else cnf1
-    private lazy val threshhold : Int = Configuration.RENAMING_THRESHHOLD
-
-    final def cnf(cl : AnnotatedClause)(implicit sig : Signature) : Set[AnnotatedClause] = internalCNF(cl, sig)
+    final def cnf(cl : AnnotatedClause)(implicit state: LocalState): Set[AnnotatedClause] = {
+      if (state.runStrategy.renaming) cnf2(cl, state)
+      else cnf1(cl, state.signature)
+    }
 
     private final def cnf1(cl: AnnotatedClause, sig: Signature): Set[AnnotatedClause] = {
       Out.trace(s"Standard CNF of ${cl.pretty(sig)}")
@@ -113,22 +121,22 @@ package inferenceControl {
       }
     }
 
-    private final def cnf2(cl: AnnotatedClause, sig: Signature): Set[AnnotatedClause] = {
-      Out.trace(s"Rename CNF of ${cl.pretty(sig)}")
-      val cnfresult = RenameCNF(leo.modules.calculus.freshVarGen(cl.cl), cl.cl)(sig).toSet
+    private final def cnf2(cl: AnnotatedClause, s: GeneralState[AnnotatedClause]): Set[AnnotatedClause] = {
+      Out.trace(s"Rename CNF of ${cl.pretty(s.signature)}")
+      val cnfresult = RenameCNF(leo.modules.calculus.freshVarGen(cl.cl), s.renamingCash, cl.cl)(s.signature).toSet
       if (cnfresult.size == 1 && cnfresult.head == cl.cl) {
         // no CNF step at all
-        Out.trace(s"CNF result:\n\t${cl.pretty(sig)}")
+        Out.trace(s"CNF result:\n\t${cl.pretty(s.signature)}")
         Set(cl)
       } else {
         val cnfsimp = cnfresult //.map(Simp.shallowSimp)
         val result = cnfsimp.map {c => AnnotatedClause(c, InferredFrom(RenameCNF, cl), cl.properties)} // TODO Definitions other way into the CNF.
-        Out.trace(s"CNF result:\n\t${result.map(_.pretty(sig)).mkString("\n\t")}")
+        Out.trace(s"CNF result:\n\t${result.map(_.pretty(s.signature)).mkString("\n\t")}")
         result
       }
     }
 
-    final def cnfSet(cls: Set[AnnotatedClause])(implicit sig: Signature): Set[AnnotatedClause] = {
+    final def cnfSet(cls: Set[AnnotatedClause])(implicit state: LocalState): Set[AnnotatedClause] = {
       var result: Set[AnnotatedClause] = Set()
       val clsIt = cls.iterator
       while(clsIt.hasNext) {
@@ -289,7 +297,7 @@ package inferenceControl {
     final private def intoConfigurationIterator(cl: Clause)(implicit sig: Signature): Iterator[IntoConfiguration] = new Iterator[IntoConfiguration] {
       import Literal.{leftSide, rightSide, selectSide}
 
-      private val maxLits = Literal.maxOf(cl.lits)
+      private val maxLits = cl.maxLits
       private var litIndex = 0
       private var lits = cl.lits
       private var side = leftSide
@@ -356,7 +364,7 @@ package inferenceControl {
       implicit val sig = state.signature
       var res: Set[AnnotatedClause] = Set()
       val clause = cl.cl
-      val maxLitsofClause = Literal.maxOf(clause.lits)
+      val maxLitsofClause = clause.maxLits
       val maxLitIt = new LiteralSideIterator(clause, true, false, true)
 
       while (maxLitIt.hasNext) {
@@ -771,7 +779,7 @@ package inferenceControl {
 
     final def instantiateTerm(t: Term, polarity: Boolean, depth: Int)(sig: Signature): Set[Term] = {
       import leo.datastructures.Term._
-      import leo.modules.HOLSignature.{Forall, Exists, Not, Impl}
+      import leo.modules.HOLSignature.{Forall, Exists, Not, Impl, &, |||}
 
       if (depth >= MAXDEPTH)
         Set(t)
@@ -780,6 +788,36 @@ package inferenceControl {
           case Not(body) =>
             val erg = instantiateTerm(body, !polarity, depth+1)(sig)
             erg.map(e => Not(e))
+          case &(l,r) =>
+            val ergL = instantiateTerm(l, polarity, depth+1)(sig)
+            val ergR = instantiateTerm(r, polarity, depth+1)(sig)
+            var result: Set[Term] = Set()
+            val ergLIt = ergL.iterator
+            while (ergLIt.hasNext) {
+              val eL = ergLIt.next()
+              val ergRIt = ergR.iterator
+              while (ergRIt.hasNext) {
+                val eR = ergRIt.next()
+                val and = &(eL, eR)
+                result = result + and
+              }
+            }
+            result
+          case |||(l,r) =>
+            val ergL = instantiateTerm(l, polarity, depth+1)(sig)
+            val ergR = instantiateTerm(r, polarity, depth+1)(sig)
+            var result: Set[Term] = Set()
+            val ergLIt = ergL.iterator
+            while (ergLIt.hasNext) {
+              val eL = ergLIt.next()
+              val ergRIt = ergR.iterator
+              while (ergRIt.hasNext) {
+                val eR = ergRIt.next()
+                val or = |||(eL, eR)
+                result = result + or
+              }
+            }
+            result
           case Impl(l,r) =>
             val ergL = instantiateTerm(l, !polarity, depth+1)(sig)
             val ergR = instantiateTerm(r, polarity, depth+1)(sig)
@@ -809,26 +847,26 @@ package inferenceControl {
               r2
             else
               r2 + t
-          case hd ∙ args =>
-            val argsIt = args.iterator
-            var newArgs: Set[Seq[Either[Term, Type]]] = Set(Vector())
-            while (argsIt.hasNext) {
-              val arg = argsIt.next()
-              if (arg.isRight) {
-                newArgs = newArgs.map(seq => seq :+ arg)
-              } else {
-                val termArg = arg.left.get
-                val erg = instantiateTerm(termArg, polarity, depth+1)(sig)
-                newArgs = newArgs.flatMap(seq => erg.map(e => seq :+ Left(e)))
-              }
-            }
-            newArgs.map(erg => Term.mkApp(hd, erg))
-          case ty :::> body =>
-            val erg = instantiateTerm(body, polarity, depth+1)(sig)
-            erg.map(e => Term.mkTermAbs(ty, e))
-          case TypeLambda(body) =>
-            val erg = instantiateTerm(body, polarity, depth+1)(sig)
-            erg.map(e => Term.mkTypeAbs(e))
+//          case hd ∙ args  =>
+//            val argsIt = args.iterator
+//            var newArgs: Set[Seq[Either[Term, Type]]] = Set(Vector())
+//            while (argsIt.hasNext) {
+//              val arg = argsIt.next()
+//              if (arg.isRight) {
+//                newArgs = newArgs.map(seq => seq :+ arg)
+//              } else {
+//                val termArg = arg.left.get
+//                val erg = instantiateTerm(termArg, polarity, depth+1)(sig)
+//                newArgs = newArgs.flatMap(seq => erg.map(e => seq :+ Left(e)))
+//              }
+//            }
+//            newArgs.map(erg => Term.mkApp(hd, erg))
+//          case ty :::> body =>
+//            val erg = instantiateTerm(body, polarity, depth+1)(sig)
+//            erg.map(e => Term.mkTermAbs(ty, e))
+//          case TypeLambda(body) =>
+//            val erg = instantiateTerm(body, polarity, depth+1)(sig)
+//            erg.map(e => Term.mkTypeAbs(e))
           case _ => Set(t)
         }
       }
@@ -873,7 +911,68 @@ package inferenceControl {
             }
           }
         }
+      } else if (isPropSet(REPLACE_SPECIAL, Configuration.PRE_PRIMSUBST_LEVEL)) {
+        if (funTyArgs.size == 2) {
+          val in = funTyArgs(0)
+          val out = funTyArgs(1)
+          if (in.isFunType) {
+            if (in.codomainType == o && in._funDomainType == out) true
+            else false
+          } else false
+        } else if (funTyArgs.size == 4) {
+          funTyArgs(0) == o && funTyArgs(1) == funTyArgs(2) && funTyArgs(2) == funTyArgs(3)
+        } else false
       } else false
+    }
+  }
+
+  protected[modules] object DomainConstraintInstanceControl {
+    import leo.modules.calculus.{DomainConstraintInstances => Constraint}
+
+    private final def constraintLiteral(l : Literal)(implicit s : GeneralState[AnnotatedClause]) : Option[Term] = {
+      val left = l.left
+      val right = l.right
+      if(leo.datastructures.isVariableModuloEta(left) && right.freeVars.isEmpty) Some(right)
+      else if(leo.datastructures.isVariableModuloEta(right) && left.freeVars.isEmpty) Some(left)
+      else None
+    }
+
+    final def detectDomainConstraint(c : AnnotatedClause)(implicit s : GeneralState[AnnotatedClause]) : Option[(Type, Set[Term])] = {
+      if(c.cl.implicitlyBound.size != 1) return None
+      val lits = c.cl.lits.iterator
+      val ty = c.cl.implicitlyBound.head._2
+      var constrs = Set[Term]()
+      while(lits.hasNext){
+        constraintLiteral(lits.next()) match {
+          case None => return None
+          case Some(t) => constrs += t
+        }
+      }
+      Some((ty,constrs))
+    }
+
+    final def instanciateDomain(c : AnnotatedClause)
+                               (implicit s : GeneralState[AnnotatedClause]) : Set[AnnotatedClause] = {
+      if(s.runStrategy.domConstr == 0) {
+        return Set(c)
+      }
+      val instatiatedClauses = Constraint.apply(c.cl, s.domainConstr, s.runStrategy.domConstr)(s.signature)
+      val result = instatiatedClauses.map{ic =>
+        if(ic != c.cl) {
+          val ac = AnnotatedClause(ic, InferredFrom(Constraint, c), c.properties)
+          val simpResult = SimplificationControl.shallowSimp(ac)(s.signature)
+          simpResult
+        } else {
+          c
+        }
+      }
+      // TODO Flag for removing
+      result + c
+    }
+
+    final def  instanciateDomain(cls : Set[AnnotatedClause])
+                                (implicit s : GeneralState[AnnotatedClause]) : Set[AnnotatedClause] = {
+      cls.flatMap(instanciateDomain(_))
     }
   }
 
@@ -910,7 +1009,7 @@ package inferenceControl {
     }
     /** Proof output end **/
 
-    final def detectChoiceClause(cw: AnnotatedClause)(state: State[AnnotatedClause]): Boolean = {
+    final def detectChoiceClause(cw: AnnotatedClause)(state: GeneralState[AnnotatedClause]): Boolean = {
       if (!state.runStrategy.choice) false
       else {
         val maybeChoiceFun = ChoiceRule.detectChoice(cw.cl)
@@ -923,7 +1022,12 @@ package inferenceControl {
       }
     }
 
-    final def instantiateChoice(cw: AnnotatedClause)(state: State[AnnotatedClause]): Set[AnnotatedClause] = {
+
+
+
+    private var choicePreds: Set[Term] = Set.empty
+
+    final def instantiateChoice(cw: AnnotatedClause)(state: GeneralState[AnnotatedClause]): Set[AnnotatedClause] = {
       if (!state.runStrategy.choice) Set()
       else {
         val cl = cw.cl
@@ -937,33 +1041,39 @@ package inferenceControl {
           val candidateIt = candidates.iterator
           while(candidateIt.hasNext) {
             val candPredicate = candidateIt.next()
-            // type is (alpha -> o), alpha is choice type
-            val choiceType: Type = candPredicate.ty._funDomainType
+            if (!choicePreds.contains(candPredicate)) {
+              // type is (alpha -> o), alpha is choice type
+              val choiceType: Type = candPredicate.ty._funDomainType
 
-            if (choiceFuns.contains(choiceType)) {
-              // Instantiate with all registered choice functions
-              val choiceFunsForChoiceType = choiceFuns(choiceType)
-              val choiceFunIt = choiceFunsForChoiceType.iterator
-              while (choiceFunIt.hasNext) {
-                val choiceFun = choiceFunIt.next()
+              if (choiceFuns.contains(choiceType)) {
+                // Instantiate with all registered choice functions
+                val choiceFunsForChoiceType = choiceFuns(choiceType)
+                val choiceFunIt = choiceFunsForChoiceType.iterator
+                while (choiceFunIt.hasNext) {
+                  val choiceFun = choiceFunIt.next()
+                  val result0 = ChoiceRule(candPredicate, choiceFun)
+                  val result = AnnotatedClause(result0, InferredFrom(ChoiceRule, axiomOfChoice(choiceType)))
+                  results = results + result
+                }
+              } else {
+                // No choice function registered, introduce one now
+                val choiceFun = registerNewChoiceFunction(choiceType)
                 val result0 = ChoiceRule(candPredicate, choiceFun)
                 val result = AnnotatedClause(result0, InferredFrom(ChoiceRule, axiomOfChoice(choiceType)))
                 results = results + result
               }
-            } else {
-              // No choice function registered, introduce one now
-              val choiceFun = registerNewChoiceFunction(choiceType)
-              val result0 = ChoiceRule(candPredicate, choiceFun)
-              val result = AnnotatedClause(result0, InferredFrom(ChoiceRule, axiomOfChoice(choiceType)))
-              results = results + result
+              choicePreds += candPredicate
             }
           }
           Out.finest(s"[Choice] Instantiate choice for terms: ${candidates.map(_.pretty(sig)).mkString(",")}")
+
+//          Out.trace(s"[Choice] Collected (${choicePreds.size}):\n\t${choicePreds.map(_.pretty(sig)).mkString("\t\n")}")
           Out.trace(s"[Choice] Results: ${results.map(_.pretty(sig)).mkString(",")}")
           results
         } else Set()
       }
     }
+
 
     final def registerNewChoiceFunction(ty: Type): Term = {
       import leo.modules.HOLSignature.Choice
@@ -971,7 +1081,8 @@ package inferenceControl {
     }
 
     final def guessFuncSpec(cls: Set[AnnotatedClause])(state: LocalState): Set[AnnotatedClause] = {
-      cls.flatMap(guessFuncSpec(_)(state))
+      if (!state.runStrategy.funcspec) Set.empty
+      else cls.flatMap(guessFuncSpec(_)(state))
     }
 
     final def guessFuncSpec(cw: AnnotatedClause)(state: LocalState): Set[AnnotatedClause] = {
@@ -1009,7 +1120,7 @@ package inferenceControl {
         val hdIdx = Term.Bound.unapply(hd).get._2
           result = result + AnnotatedClause(cl.substituteOrdered(Subst.singleton(hdIdx, a))(sig), FromSystem("choice instance"), cw.properties)
       }
-      Out.finest(s"FunSpec result:\n\t${result.map(_.pretty(sig)).mkString("\n\t")}")
+      Out.trace(s"FunSpec result:\n\t${result.map(_.pretty(sig)).mkString("\n\t")}")
 
       result
     }
@@ -1289,7 +1400,7 @@ package inferenceControl {
 
       import Literal.{leftSide, rightSide, selectSide}
 
-      val maxLits: Seq[Literal] = Literal.maxOf(cl.lits)
+      val maxLits: Seq[Literal] = cl.maxLits
       var litIndex = 0
       var lits: Seq[Literal] = cl.lits
       var side: Side = rightSide // minimal side
@@ -1437,7 +1548,7 @@ package inferenceControl {
   protected final class LiteralSideIterator(cl: Clause, onlyMax: Boolean, onlyPositive: Boolean, alsoFlexheads: Boolean)(implicit sig: Signature) extends Iterator[inferenceControl.WithConfiguration] {
     import Literal.{leftSide, rightSide}
 
-    private val maxLits = Literal.maxOf(cl.lits)
+    private val maxLits = cl.maxLits
     private var litIndex = 0
     private var lits = cl.lits
     private var side = leftSide
@@ -1609,7 +1720,9 @@ package indexingControl {
 
     final def resetIndexes(state: State[AnnotatedClause]): Unit = {
       state.fVIndex.reset()
+      state.resetCash()
       leo.datastructures.Term.reset()
+      leo.datastructures.Type.clear()
     }
 
 
@@ -1735,29 +1848,59 @@ package indexingControl {
     final def getRelevantAxioms(input: Seq[AnnotatedFormula], conjecture: AnnotatedFormula)(sig: Signature): Seq[AnnotatedFormula] = {
       if (Configuration.NO_AXIOM_SELECTION) input
       else {
-        var result: Seq[AnnotatedFormula] = Vector.empty
-        var round : Int = 0
-
-        leo.Out.finest(s"Conjecture: ${conjecture.toString}")
-        val conjSymbols = PreFilterSet.useFormula(conjecture)
-        leo.Out.finest(s"Symbols in conjecture: ${conjSymbols.mkString(",")}")
-        val firstPossibleCandidates = PreFilterSet.getCommonFormulas(conjSymbols)
-        var taken: Iterable[AnnotatedFormula] = firstPossibleCandidates.filter(f => RelevanceFilter(round)(f))
-        round += 1
-
-        while (taken.nonEmpty) {
-          // From SeqFilter:
-          // Take all formulas (save the newly touched symbols
-          val newsymbs : Iterable[String] = taken.flatMap(f => PreFilterSet.useFormula(f))
-          taken.foreach(f => result = f +: result)
-          // Obtain all formulas, that have a
-          val possibleCandidates : Iterable[AnnotatedFormula] = PreFilterSet.getCommonFormulas(newsymbs)
-          // Take the new formulas
-          taken = possibleCandidates.filter(f => RelevanceFilter(round)(f))
-          round += 1
+        if (input.isEmpty) input
+        else {
+          val noAx = input.size
+          if (noAx < 10) {
+            // dont filter here
+            input
+          } else if (noAx < 20) {
+            getRelevantAxioms0(input, conjecture,
+              0.54, 2.35)(sig)
+          } else if (noAx < 100) {
+            getRelevantAxioms0(input, conjecture,
+              0.56, 2.35)(sig)
+          } else if (noAx < 200) {
+            getRelevantAxioms0(input, conjecture,
+              0.58, 2.35)(sig)
+          } else if (noAx < 500) {
+            getRelevantAxioms0(input, conjecture,
+              0.6, 2.35)(sig)
+          } else if (noAx < 1000) {
+            getRelevantAxioms0(input, conjecture,
+              0.64, 2.35)(sig)
+          } else {
+            getRelevantAxioms0(input, conjecture,
+              0.66, 2.35)(sig)
+          }
         }
-        result
       }
+    }
+
+    final def getRelevantAxioms0(input: Seq[AnnotatedFormula], conjecture: AnnotatedFormula,
+                                 passmark: Double, aging: Double)(sig: Signature): Seq[AnnotatedFormula] = {
+      var result: Seq[AnnotatedFormula] = Vector.empty
+      var round : Int = 0
+
+      leo.Out.finest(s"Conjecture: ${conjecture.toString}")
+      val conjSymbols = PreFilterSet.useFormula(conjecture)
+      leo.Out.finest(s"Symbols in conjecture: ${conjSymbols.mkString(",")}")
+      val firstPossibleCandidates = PreFilterSet.getCommonFormulas(conjSymbols)
+      var taken: Iterable[AnnotatedFormula] = firstPossibleCandidates.filter(f => RelevanceFilter(passmark)(aging)(round)(f))
+      round += 1
+
+      while (taken.nonEmpty) {
+        // From SeqFilter:
+        // Take all formulas (save the newly touched symbols
+        val newsymbs : Iterable[String] = taken.flatMap(f => PreFilterSet.useFormula(f))
+        taken.foreach(f => result = f +: result)
+        // Obtain all formulas, that have a
+        val possibleCandidates : Iterable[AnnotatedFormula] = PreFilterSet.getCommonFormulas(newsymbs)
+        // Take the new formulas
+        taken = possibleCandidates.filter(f => RelevanceFilter(passmark)(aging)(round)(f))
+        round += 1
+      }
+      result
     }
 
     final def relevanceFilterAdd(formula: AnnotatedFormula)(sig: Signature): Unit = {
@@ -1768,107 +1911,192 @@ package indexingControl {
 
 package  externalProverControl {
   import leo.modules.output.SuccessSZS
+  import leo.modules.external.Capabilities.Language
+  import leo.datastructures.{Clause, ClauseProxy}
+  import leo.modules.prover.State.LastCallStat
 
   object ExtProverControl {
     import leo.modules.external._
     import leo.modules.output.SZS_Error
+
+    type S = State[AnnotatedClause]
     private final val prefix: String = "[ExtProver]"
-    private var openCalls: Map[TptpProver[AnnotatedClause], Set[Future[TptpResult[AnnotatedClause]]]] = Map()
-    private var lastCheck: Long = Long.MinValue
-    private var lastCall: Long = 0
 
-    final def openCallsExist: Boolean = openCalls.nonEmpty
+    private var openCalls: Set[S] = Set.empty // keep track of states with open ext. prover calls
+    private var callFacade : AsyncTranslation = new SequentialTranslationImpl
 
-    final private def helpfulAnswer(result: TptpResult[AnnotatedClause]): Boolean = {
-      result.szsStatus match {
-        case _:SuccessSZS => true
-        case _ => false
+    final def registerAsyncTranslation(translation : AsyncTranslation) : Unit = {
+      callFacade = translation
+    }
+
+    final def registerExtProver(provers: Seq[(String, String)])(implicit state: S): Unit = {
+      import leo.modules.external.ExternalProver
+      Configuration.ATPS.foreach { case (name, path) =>
+        try {
+          val p = ExternalProver.createProver(name, path)
+          state.addExternalProver(p)
+          leo.Out.info(s"$name registered as external prover.")
+        } catch {
+          case e: NoSuchMethodException => leo.Out.warn(e.getMessage)
+        }
       }
+
+      if(Configuration.CONCURRENT_TRANSLATE) {
+        val maxTrans = Configuration.ATP_MAX_JOBS
+        val asyncTrans = new PrivateThreadPoolTranslationImpl(maxTrans)
+        registerAsyncTranslation(asyncTrans)
+      }
+
+      state.setLastCallStat(new MixedInfoLastCallStat)
+    }
+
+    final def openCallsExistGlobally: Boolean = openCalls.nonEmpty  // TODO check open translations?
+    final def openCallsExist(implicit state: S): Boolean = state.openExtCalls.nonEmpty || state.getTranslations > 0
+
+    final def submit(clauses: Set[AnnotatedClause], state: State[AnnotatedClause], force: Boolean = false): Unit = {
+      callFacade.call(clauses, state, force)
     }
 
     final def checkExternalResults(state: State[AnnotatedClause]): Seq[TptpResult[AnnotatedClause]] = {
       if (state.externalProvers.isEmpty) Seq.empty
       else {
-        val curTime = System.currentTimeMillis()
-        if (curTime >= lastCheck + Configuration.ATP_CHECK_INTERVAL * 1000) {
-          leo.Out.debug(s"[ExtProver]: Checking for finished jobs.")
-          var results: Seq[TptpResult[AnnotatedClause]] = Vector.empty
-          lastCheck = curTime
-          val proversIt = openCalls.keys.iterator
-          while (proversIt.hasNext) {
-            val prover = proversIt.next()
-            var finished: Set[Future[TptpResult[AnnotatedClause]]] = Set.empty
-            val openCallsIt = openCalls(prover).iterator
-            while (openCallsIt.hasNext) {
-              val openCall = openCallsIt.next()
-              if (openCall.isCompleted) {
-                leo.Out.debug(s"[ExtProver]: Job finished (${prover.name}).")
-                finished = finished + openCall
-                val result = openCall.value.get
-                val resultSZS = result.szsStatus
-                leo.Out.debug(s"[ExtProver]: Result ${resultSZS.pretty}")
-                if (resultSZS == SZS_Error) leo.Out.warn(result.error.mkString("\n"))
-                if (helpfulAnswer(result)) {
-                  results = results :+ result
-//                  val oldOpenCalls = openCalls(prover)
-//                  val newOpenCalls = oldOpenCalls diff finished
-//                  if (newOpenCalls.isEmpty) openCalls = openCalls - prover
-//                  else openCalls = openCalls.updated(prover, newOpenCalls)
-//                  return Some(result)
-                }
+        leo.Out.debug(s"[ExtProver]: Checking for finished jobs ...")
+        var results: Seq[TptpResult[AnnotatedClause]] = Vector.empty
+
+        val proversIt = synchronized(state.openExtCalls.iterator)
+        while (proversIt.hasNext) {
+          val (prover, openCalls0) = proversIt.next()
+          var finished: Set[Future[TptpResult[AnnotatedClause]]] = Set.empty
+          val openCallsIt = openCalls0.iterator
+          while (openCallsIt.hasNext) {
+            val openCall = openCallsIt.next()
+            if (openCall.isCompleted) {
+              leo.Out.debug(s"[ExtProver]: Job finished (${prover.name}).")
+              finished = finished + openCall
+              val result = openCall.value.get
+              val resultSZS = result.szsStatus
+              leo.Out.debug(s"[ExtProver]: Result ${resultSZS.pretty}")
+              if (resultSZS == SZS_Error) leo.Out.warn(result.error.mkString("\n"))
+              if (helpfulAnswer(result)) {
+                results = results :+ result
               }
             }
-            val oldOpenCalls = openCalls(prover)
-            val newOpenCalls = oldOpenCalls diff finished
-            if (newOpenCalls.isEmpty) openCalls = openCalls - prover
-            else openCalls = openCalls.updated(prover, newOpenCalls)
           }
-          results
-        } else Seq.empty
+          synchronized {
+            state.removeOpenExtCalls(prover, finished)
+
+            var curJobs = if (state.openExtCalls.isDefinedAt(prover)) state.openExtCalls(prover).size else 0
+            while (curJobs < Configuration.ATP_MAX_JOBS && state.queuedCallExists(prover)) {
+              val problem = state.nextQueuedCall(prover)
+              submit1(prover, problem, state)
+              curJobs = curJobs +1
+            }
+
+            if (state.openExtCalls.isEmpty) openCalls = openCalls - state
+          }
+        }
+        results
       }
     }
-    final def shouldRun(clauses: Set[AnnotatedClause], state: State[AnnotatedClause]): Boolean = {
-      state.noProofLoops >= lastCall + Configuration.ATP_CALL_INTERVAL
-    }
-    final def submit(clauses: Set[AnnotatedClause], state: State[AnnotatedClause]): Unit = {
+
+
+    final def checkExternalResults(): Map[S, Seq[TptpResult[AnnotatedClause]]] =
+      openCalls.map(state => (state, checkExternalResults(state))).toMap
+
+
+    final def sequentialSubmit(clauses: Set[AnnotatedClause], state: State[AnnotatedClause], force: Boolean = false): Unit = {
       if (state.externalProvers.nonEmpty) {
-        if (shouldRun(clauses, state)) {
-          leo.Out.debug(s"[ExtProver]: Staring jobs ...")
-          lastCall = state.noProofLoops
+        if (shouldRun(realProblem(clauses)(state), state) || force) {
+          leo.Out.debug(s"[ExtProver]: Starting jobs ...")
+          state.lastCall.calledNow(realProblem(clauses)(state))(state)
+          val openCallState = state.openExtCalls
           state.externalProvers.foreach(prover =>
-            if (openCalls.isDefinedAt(prover)) {
-              if (openCalls(prover).size < Configuration.ATP_MAX_JOBS) {
-                val futureResult = callProver(prover,state.initialProblem union clauses, Configuration.ATP_TIMEOUT(prover.name), state, state.signature)
-                if (futureResult != null) openCalls = openCalls + (prover -> (openCalls(prover) + futureResult))
-                leo.Out.debug(s"[ExtProver]: ${prover.name} started.")
+            if (openCallState.isDefinedAt(prover)) {
+              if (openCallState(prover).size < Configuration.ATP_MAX_JOBS) {
+                submit1(prover, clauses, state)
+              }  else {
+                state.enqueueCall(prover, clauses)
               }
             } else {
-              val futureResult = callProver(prover,state.initialProblem union clauses, Configuration.ATP_TIMEOUT(prover.name), state, state.signature)
-              if (futureResult != null) openCalls = openCalls + (prover -> Set(futureResult))
-              leo.Out.debug(s"[ExtProver]: ${prover.name} started.")
+              submit1(prover, clauses, state)
             }
           )
         }
       }
     }
 
+    final def uncheckedSequentialSubmit(clauses: Set[AnnotatedClause], state: State[AnnotatedClause], force : Boolean = false): Unit = {
+      if (state.externalProvers.nonEmpty) {
+        leo.Out.debug(s"[ExtProver]: Starting jobs ...")
+        state.lastCall.calledNow(realProblem(clauses)(state))(state)
+        val openCallState = state.openExtCalls
+        state.externalProvers.foreach(prover =>
+          if (openCallState.isDefinedAt(prover)) {
+            if (openCallState(prover).size < Configuration.ATP_MAX_JOBS) {
+              submit1(prover, clauses, state)
+            }  else {
+              state.enqueueCall(prover, clauses)
+            }
+          } else {
+            submit1(prover, clauses, state)
+          }
+        )
+      }
+    }
+
+
     final def submitSingleProver(prover : TptpProver[AnnotatedClause],
                                  clauses: Set[AnnotatedClause],
                                  state: State[AnnotatedClause]) : Unit = {
-      leo.Out.debug(s"[ExtProver]: Staring job ${prover.name}")
-      lastCall = state.noProofLoops
-      if (openCalls.isDefinedAt(prover)) {
-        if (openCalls(prover).size < Configuration.ATP_MAX_JOBS) {
-          val futureResult = callProver(prover,state.initialProblem union clauses, Configuration.ATP_TIMEOUT(prover.name), state, state.signature)
-          if (futureResult != null) openCalls = openCalls + (prover -> (openCalls(prover) + futureResult))
-          leo.Out.debug(s"[ExtProver]: ${prover.name} started.")
+      leo.Out.debug(s"[ExtProver]: Starting job ${prover.name}")
+      state.lastCall.calledNow(realProblem(clauses)(state))(state)
+      submit0(prover, clauses, state)
+    }
+
+    private def submit0(prover: TptpProver[AnnotatedClause],
+                        clauses: Set[AnnotatedClause], state: S): Unit = {
+      val openCallState = state.openExtCalls
+      if (openCallState.isDefinedAt(prover)) {
+        if (openCallState(prover).size < Configuration.ATP_MAX_JOBS) {
+          submit1(prover, clauses, state)
+        }  else {
+          state.enqueueCall(prover, clauses)
         }
       } else {
-        val futureResult = callProver(prover,state.initialProblem union clauses, Configuration.ATP_TIMEOUT(prover.name), state, state.signature)
-        if (futureResult != null) openCalls = openCalls + (prover -> Set(futureResult))
-        leo.Out.debug(s"[ExtProver]: ${prover.name} started.")
+        submit1(prover, clauses, state)
       }
     }
+
+    private def submit0All(clauses: Set[AnnotatedClause], state: S): Unit = {
+      val openCallState = state.openExtCalls
+      state.externalProvers.foreach(prover =>
+        if (openCallState.isDefinedAt(prover)) {
+          if (openCallState(prover).size < Configuration.ATP_MAX_JOBS) {
+            submit1(prover, clauses, state)
+          } else {
+            state.enqueueCall(prover, clauses)
+          }
+        } else {
+          submit1(prover, clauses, state)
+        }
+      )
+    }
+
+    private def submit1(prover: TptpProver[AnnotatedClause],
+                        clauses: Set[AnnotatedClause], state: S): Unit = {
+      val problem = realProblem(clauses)(state)
+      val futureResult = callProver(prover,problem, Configuration.ATP_TIMEOUT(prover.name), state, state.signature)
+      if (futureResult != null) {
+        state.addOpenExtCall(prover, futureResult)
+        openCalls = openCalls + state
+      }
+      leo.Out.debug(s"[ExtProver]: ${prover.name} started.")
+    }
+
+    @inline private def realProblem(problem: Set[AnnotatedClause])(state: S): Set[AnnotatedClause] = {
+      state.initialProblem union problem
+    }
+
     final def callProver(prover: TptpProver[AnnotatedClause],
                                  problem: Set[AnnotatedClause], timeout : Int,
                                  state: State[AnnotatedClause], sig: Signature): Future[TptpResult[AnnotatedClause]] = {
@@ -1876,17 +2104,27 @@ package  externalProverControl {
       import leo.modules.external.Capabilities._
       // Check what the provers speaks, translate only to first-order if necessary
       val proverCaps = prover.capabilities
-      val extraArgs = Seq(Configuration.ATP_ARGS(prover.name))
+      val extraArgs0 = Configuration.ATP_ARGS(prover.name)
+      val extraArgs = if (extraArgs0 == "") Seq.empty else extraArgs0.split(" ").toSeq
       if (proverCaps.contains(THF)) {
-        prover.call(problem, problem.map(_.cl), sig, THF, timeout, extraArgs)
+        val preparedProblem = prepareProblem(problem, THF)(sig)
+        callProver0(prover, problem, preparedProblem.map(_.cl), sig, THF, timeout, extraArgs)
       } else if (proverCaps.contains(TFF)) {
         Out.finest(s"Translating problem ...")
-        val (translatedProblem, auxDefs, translatedSig) =
-          if (supportsFeature(proverCaps, TFF)(Polymorphism))
-            Encoding(problem.map(_.cl), EP_None, LambdaElimStrategy_SKI,  PolyNative)(sig)
-          else
-            Encoding(problem.map(_.cl), EP_None, LambdaElimStrategy_SKI,  MonoNative)(sig)
-          prover.call(problem, translatedProblem union auxDefs, translatedSig, TFF, timeout, extraArgs)
+        val preparedProblem = prepareProblem(problem, TFF)(sig)
+        try {
+          val (translatedProblem, auxDefs, translatedSig) =
+            if (supportsFeature(proverCaps, TFF)(Polymorphism))
+              Encoding(preparedProblem.map(_.cl), EP_None, LambdaElimStrategy_SKI,  PolyNative)(sig)
+            else
+              Encoding(preparedProblem.map(_.cl), EP_None, LambdaElimStrategy_SKI,  MonoNative)(sig)
+          callProver0(prover, problem, translatedProblem union auxDefs, translatedSig, TFF, timeout, extraArgs)
+        } catch {
+          case e: Exception =>
+            Out.warn(s"Translation of external proof obligation failed for some reason.")
+            Out.debug(e.toString)
+            null
+        }
       } else if (proverCaps.contains(FOF)) {
         Out.warn(s"$prefix Untyped first-order cooperation currently not supported.")
         null
@@ -1894,126 +2132,180 @@ package  externalProverControl {
         Out.warn(s"$prefix Prover ${prover.name} input syntax not supported.")
         null
       }
+    }
 
+    private def callProver0(prover: TptpProver[AnnotatedClause],
+                            referenceProblem: Set[AnnotatedClause], problem: Set[Clause],
+                            sig: Signature, language: Capabilities.Language, timeout: Int,
+                            extraArgs: Seq[String]): Future[TptpResult[AnnotatedClause]] = {
+      try {
+        prover.call(referenceProblem, problem, sig, language, timeout, extraArgs)
+      } catch {
+        case e: Exception => Out.warn(e.toString); null
+      }
+    }
 
-
-
-
-//      if (state.isPolymorphic) { // FIXME: Hack, implement with capabilities
-//        // monomorphize the problem
-//        val monoResult = leo.modules.encoding.Encoding.mono(problem.map(_.cl))(sig)
-//        val asAnnotated = monoResult._1.map(cl =>
-//          AnnotatedClause(cl, Role_Axiom, NoAnnotation, ClauseAnnotation.PropNoProp))
-//        prover.call(asAnnotated, timeout)(monoResult._3)
-//      } else prover.call(problem, timeout)(state.signature)
+    /** Prepare a problem that is given as a set of clauses (i.e. clauses from the
+      * processed set or so) and rework them into a set of clauses suitable for
+      * giving to an external prover. This may include
+      * (1) deletion of clauses that seem irrelevant
+      * (2) addition of clauses whose information is represented elsewhere inside Leo
+      * (3) (satisfiability-preserving) modification of clauses if reasonable.
+      *
+      * Concretely, this method enriches the problem with axioms
+      * about some signature constants (choice ...).
+      * if goal language first-order. */
+    final def prepareProblem(problem: Set[AnnotatedClause], goalLanguage: Language)(implicit sig: Signature): Set[AnnotatedClause] = {
+      import leo.datastructures.Role_Axiom
+      import leo.datastructures.ClauseAnnotation
+      import ClauseAnnotation.{NoAnnotation, PropNoProp}
+      val extraAxioms = leo.modules.external.generateSpecialAxioms(sig)
+      extraAxioms.map(AnnotatedClause(_, Role_Axiom, NoAnnotation, PropNoProp)) union problem
     }
 
     final def killExternals(): Unit = {
-      Out.info(s"Killing external provers ...")
-      openCalls.keys.foreach(prover =>
-        openCalls(prover).foreach(future =>
-          future.kill()
-        )
-      )
+      callFacade.killAll()
+    }
+
+    final def sequentialKillExternals(): Unit = {
+      Out.info(s"Killing All external provers ...")
+      openCalls.foreach {state => sequentialKillExternals(state) }
+    }
+
+    final def sequentialKillExternals(state : State[AnnotatedClause]) : Unit = {
+      state.openExtCalls.foreach { case (_, futures) =>
+        futures.foreach(_.kill())
+      }
+    }
+
+    @inline final def shouldRun(problem: Set[AnnotatedClause], state: State[AnnotatedClause]): Boolean = state.lastCall.shouldCall(problem)(state)
+
+    class MixedInfoLastCallStat extends State.LastCallStat[AnnotatedClause] {
+      override def shouldCall(problem: Set[AnnotatedClause])(implicit state: State[AnnotatedClause]): Boolean = {
+        if (state.openExtCalls.isEmpty && lastLoopCount < state.noProofLoops && problem != lastProblem) {
+          true
+        } else {
+          if (state.noProofLoops - lastLoopCount >= Configuration.ATP_CALL_INTERVAL && problem != lastProblem) {
+            true
+          }
+          else {
+            if (System.currentTimeMillis() - lastTime > Configuration.DEFAULT_ATP_TIMEOUT*1000 && problem != lastProblem) {
+              true
+            }
+            else false
+          }
+        }
+      }
+
+      override def fresh: LastCallStat[AnnotatedClause] = new MixedInfoLastCallStat
+    }
+
+    final private def helpfulAnswer(result: TptpResult[AnnotatedClause]): Boolean = {
+      result.szsStatus match {
+        case _:SuccessSZS => true
+        case _ => false
+      }
     }
   }
 }
 
 package schedulingControl {
+  import leo.modules.agent.multisearch.EquiScheduleImpl
+  import leo.modules.control.Control.{RunConfiguration, RunSchedule}
+
   object StrategyControl {
+    import leo.modules.prover.RunStrategy._
+    val MINTIME = 60
+    val STRATEGIES: Seq[RunStrategy] = Seq( s1, s3b, s2, s1b, s6 )
 
-    val MINTIME = 20
-    val STRATEGY_TEMPLATES: Seq[RunStrategy] = Seq(
-      RunStrategy(
-        timeout = -1,
-        primSubst = Configuration.DEFAULT_PRIMSUBST,
-        sos = Configuration.DEFAULT_SOS,
-        unifierCount = Configuration.DEFAULT_UNIFIERCOUNT,
-        uniDepth = Configuration.DEFAULT_UNIFICATIONDEPTH,
-        boolExt = true,
-        choice = true),
+    final def strategyList: Seq[RunStrategy] = {
+      if (Configuration.isSet("strategies")) {
+        val inputString0 = Configuration.valueOf("strategies")
+        if (inputString0.isDefined) {
+          val inputString = inputString0.get
+          val input = inputString.head
+          val inputAsList = input.split(",").iterator
+          var result: Seq[RunStrategy] = Seq.empty
+          while (inputAsList.hasNext) {
+            val sName = inputAsList.next()
+            val s0 = RunStrategy.byName(sName)
+            result = result :+ s0
+          }
+          result
+        } else STRATEGIES
+      } else STRATEGIES
+    }
 
-      RunStrategy(
-        timeout = -1,
-        primSubst = Configuration.DEFAULT_PRIMSUBST,
-        sos = true,
-        unifierCount = Configuration.DEFAULT_UNIFIERCOUNT,
-        uniDepth = Configuration.DEFAULT_UNIFICATIONDEPTH,
-        boolExt = true,
-        choice = true),
-
-      RunStrategy(
-        timeout = -1,
-        primSubst = Configuration.DEFAULT_PRIMSUBST,
-        sos = false,
-        unifierCount = 3,
-        uniDepth = Configuration.DEFAULT_UNIFICATIONDEPTH,
-        boolExt = true,
-        choice = true),
-
-      RunStrategy(
-        timeout = -1,
-        primSubst = Configuration.DEFAULT_PRIMSUBST,
-        sos = true,
-        unifierCount = 3,
-        uniDepth = Configuration.DEFAULT_UNIFICATIONDEPTH,
-        boolExt = true,
-        choice = true),
-
-      RunStrategy(
-        timeout = -1,
-        primSubst = 2,
-        sos = false,
-        unifierCount = 3,
-        uniDepth = Configuration.DEFAULT_UNIFICATIONDEPTH,
-        boolExt = true,
-        choice = true),
-
-      RunStrategy(
-        timeout = -1,
-        primSubst = 2,
-        sos = true,
-        unifierCount = 3,
-        uniDepth = Configuration.DEFAULT_UNIFICATIONDEPTH,
-        boolExt = true,
-        choice = true)
-    )
-
-
-    final def generateRunStrategies: Iterator[RunStrategy] = {
+    /**
+      * Given a time `globalTimeout`, return a [[RunSchedule]]
+      * in which for each [[RunStrategy]] `r` it holds that
+      * {{{timeout  of r = MINTIME * share + extraTime}}}
+      *
+      * @see [[leo.modules.control.schedulingControl.StrategyControl.MINTIME]]
+      */
+    final def generateRunStrategies(globalTimeout: Int, extraTime: Int = 0): RunSchedule = {
       val to = Configuration.TIMEOUT
       if (to == 0) {
         // unlimited resources, dont schedule...i guess?
-        Iterator(defaultStrategy(0))
+        Iterable((defaultStrategy,0))
       } else {
-        // limited resources, divide time for different strategies
-        // each strategy should take at least MINTIME seconds
-        val nominalStrategyCount = Math.floorDiv(to, MINTIME)
-        val remainingTime = Math.floorMod(to, MINTIME)
-        val realStrategyCount = Math.min(STRATEGY_TEMPLATES.size, nominalStrategyCount)
-        val exceedTime = (nominalStrategyCount-realStrategyCount)*MINTIME+remainingTime
-        val extraTimePerStrategy = Math.floorDiv(exceedTime, realStrategyCount)
-        val timePerStrategy = MINTIME + extraTimePerStrategy
-        val overheadTime = Math.floorMod(exceedTime, realStrategyCount)
+        val strategyIt = strategyList.iterator
+        var remainingTime = globalTimeout
+        var result: Seq[RunConfiguration] = Vector.empty
+        var shareSum: Float = 0
+        while (strategyIt.hasNext) {
+          val strategy = strategyIt.next()
+          val proportionalTimeOfStrategy = (strategy.share * MINTIME).toInt + extraTime
 
-        val defStrategy = defaultStrategy(timePerStrategy + overheadTime)
-        Iterator(
-          defStrategy
-            +: STRATEGY_TEMPLATES.filterNot(_ == defStrategy).take(realStrategyCount-1).map(t =>
-            RunStrategy(timePerStrategy, t.primSubst, t.sos,
-              t.unifierCount, t.uniDepth, t.boolExt, t.choice)):_*
-        )
+          if (proportionalTimeOfStrategy <= remainingTime) {
+            result = result :+ (strategy, proportionalTimeOfStrategy)
+            remainingTime = remainingTime - proportionalTimeOfStrategy
+            shareSum = shareSum + strategy.share
+          } else {
+            // distribute remaining time
+            val remainingTime0 = remainingTime
+            result = result.map {case (s,time) =>
+              val extraTime = (remainingTime0 * (s.share / shareSum)).floor.toInt
+              (s, time+extraTime)
+            }
+          }
+        }
+        Iterable(result:_*)
       }
     }
 
-    def defaultStrategy(timeout: Int): RunStrategy = {
-      RunStrategy(timeout,
-        Configuration.PRIMSUBST_LEVEL,
-        Configuration.SOS,
-        Configuration.UNIFIER_COUNT,
-        Configuration.UNIFICATION_DEPTH,
-        Configuration.DEFAULT_BOOLEXT,
-        Configuration.DEFAULT_CHOICE)
+    final def defaultStrategy: RunStrategy = {
+      // currently: ignore meta-knowledge from state and just return standard strategy
+      RunStrategy.defaultStrategy
+    }
+
+    final def calculateExtraTime(noAxioms: Int): Int = {
+      if (noAxioms < 200) 0
+      else if (noAxioms < 500) 5
+      else if (noAxioms < 1000) 20
+      else 30
+    }
+  }
+
+  object ParStrategyControl {
+    import leo.modules.agent.multisearch.Schedule
+    //TODO  Mintime is set in Schedule!!! Move here
+    val STRATEGIES: Seq[RunStrategy] = StrategyControl.STRATEGIES // TODO Own strategies? Reorder?
+
+
+    final def generateRunStrategies(): Schedule = {
+      val to = Configuration.TIMEOUT
+      if (to == 0) {
+        // unlimited resources, dont schedule...i guess?
+        new EquiScheduleImpl(Seq(defaultStrategy))
+      } else {
+        new EquiScheduleImpl(STRATEGIES)
+      }
+    }
+
+
+    final def defaultStrategy: RunStrategy = {
+      RunStrategy.defaultStrategy
     }
   }
 }

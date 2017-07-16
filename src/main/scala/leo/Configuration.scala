@@ -1,7 +1,7 @@
 package leo
 
 import java.util.logging.Level
-import java.nio.file.{Path, Paths}
+import java.nio.file.{Path,Files}
 
 import leo.modules.output.Output
 import leo.modules.parsers.CLParameterParser
@@ -32,6 +32,7 @@ object Configuration extends DefaultConfiguration {
   private val PARAM_PRIMSUBST = "primsubst"
   private val PARAM_PRE_PRIMSUBST = "instantiate"
   private val PARAM_PRE_PRIMSUBST_MAXDEPTH = "instantiate-maxdepth"
+  private val PARAM_FUNCSPEC = "funcspec"
   private val PARAM_RELEVANCEFILTER = "relevancefiltering"
   private val PARAM_PASSMARK = "passmark"
   private val PARAM_AGING = "aging"
@@ -43,6 +44,8 @@ object Configuration extends DefaultConfiguration {
   private val RENAMING = "renaming"
   private val PARAM_CONSISTENCYCHECK = "consistency-only"
   private val EXTRACTION_TYPE_PARAM = "xType"
+  private val PARAM_PAR_SCHED = "parSched"
+  private val PARAM_CONCURRENT_TRANSLATE = "encode-threaded"
 
   // Collect standard options for nice output: short-option -> (long option, argname, description)
   private val optionsMap : Map[Char, (String, String, String)] = {
@@ -82,15 +85,25 @@ object Configuration extends DefaultConfiguration {
     case _ => ()
   }
 
+  final def cleanup(): Unit = {
+    leo.Out.debug(s"Cleaning up temporary files ...")
+    import leo.modules.external.ExternalProver
+    ExternalProver.cleanup()
+    leo.Out.debug(s"Clean-up finished!")
+  }
+
   //////////////////////////
   // Predefined parameters
   //////////////////////////
   def isInit: Boolean = configMap != null
 
   final val VERSION: String = "1.1"
-  final val USER_HOME: String = System.getProperty("user.home")
-  final val LEODIR_NAME: String = ".leo3"
-  final val LEODIR: Path = Paths.get(USER_HOME, LEODIR_NAME)
+  final val LEODIR_NAME: String = "leo3"
+  final lazy val LEODIR: Path = {
+    val dir = Files.createTempDirectory(LEODIR_NAME)
+    dir.toFile.deleteOnExit()
+    dir
+  }
 
   lazy val HELP: Boolean = isSet(PARAM_HELP)
 
@@ -101,6 +114,7 @@ object Configuration extends DefaultConfiguration {
   }
 
   lazy val THREADCOUNT: Int = uniqueIntFor(PARAM_THREADCOUNT, DEFAULT_THREADCOUNT)
+  lazy val PAR_SCHED : Int = uniqueIntFor(PARAM_PAR_SCHED, DEFAULT_PAR_SCHED)
 
   lazy val VERBOSITY: java.util.logging.Level = {
     val v = configMap.get(PARAM_VERBOSITY) match {
@@ -126,6 +140,8 @@ object Configuration extends DefaultConfiguration {
   lazy val RELEVANCE_PASSMARK: Double = uniqueDoubleFor(PARAM_PASSMARK, DEFAULT_PASSMARK)
   lazy val RELEVANCE_AGING: Double = uniqueDoubleFor(PARAM_AGING, DEFAULT_AGING)
 
+  lazy val FUNCSPEC: Boolean = isSet(PARAM_FUNCSPEC) || DEFAULT_FUNCSPEC
+
   lazy val UNIFICATION_DEPTH: Int = uniqueIntFor(PARAM_UNIFICATIONDEPTH, DEFAULT_UNIFICATIONDEPTH)
   lazy val UNIFIER_COUNT: Int = uniqueIntFor(PARAM_UNIFIERCOUNT, DEFAULT_UNIFIERCOUNT)
   lazy val MATCHING_DEPTH: Int = uniqueIntFor(PARAM_MATCHINGDEPTH, DEFAULT_MATCHINGDEPTH)
@@ -147,17 +163,27 @@ object Configuration extends DefaultConfiguration {
 
   lazy val LITERAL_WEIGHTING: LiteralWeight = LiteralWeights.termsize
 
-  lazy val TERM_ORDERING: TermOrdering = leo.datastructures.impl.orderings.TO_CPO_Naive
+  lazy val TERM_ORDERING: TermOrdering = {
+    if (isSet("ordering")) {
+      val ord = valueOf("ordering").get.head
+      ord match {
+        case "CPO" => leo.datastructures.impl.orderings.TO_CPO_Naive
+        case "none" => leo.datastructures.impl.orderings.NO_ORDERING
+        case _ => DEFAULT_TERMORDERING
+      }
+    } else{
+      DEFAULT_TERMORDERING
+    }
+  }
 
   lazy val PRECEDENCE: Precedence = Precedence.arityInvOrder
 
-  lazy val RENAMING_SET : Boolean = isSet(RENAMING)
+  lazy val RENAMING_SET : Boolean = isSet(RENAMING) || DEFAULT_RENAMING
   lazy val RENAMING_THRESHHOLD : Int = valueOf(RENAMING).fold(0)(_.headOption.fold(0)(_.toInt))
   lazy val EXTRACTION_TYPE: Int = uniqueIntFor(EXTRACTION_TYPE_PARAM, 1)
 
   lazy val ATP_CALL_INTERVAL: Int = uniqueIntFor(PARAM_ATPCALLINTERVAL, DEFAULT_ATPCALLINTERVAL)
   lazy val ATP_MAX_JOBS: Int = uniqueIntFor(PARAM_ATPMAXJOBS, DEFAULT_ATPMAXJOBS)
-  lazy val ATP_CHECK_INTERVAL: Int = uniqueIntFor(PARAM_ATPCHECKINTERVAL, DEFAULT_ATPCHECKINTERVAL)
   lazy val ATPS : Seq[(String, String)] = {
     val a = valueOf("a")
     if(a.nonEmpty) {
@@ -207,7 +233,7 @@ object Configuration extends DefaultConfiguration {
     }
   }
 
-  final val ATP_STD_TIMEOUT : Int = 40
+
   lazy val ATP_TIMEOUT : Map[String, Int] = {
     val a = valueOf("e")
     if(a.nonEmpty) {
@@ -215,7 +241,7 @@ object Configuration extends DefaultConfiguration {
       atps.filter(_.contains("=")).map{(s : String)  =>
         val eses = s.split("=",2)
         (eses(0), eses(1).toInt)
-      }.toMap.withDefault(_ => ATP_STD_TIMEOUT)
+      }.toMap.withDefault(_ => DEFAULT_ATP_TIMEOUT)
     } else {
       val b = valueOf("atp-timeout")
       if(b.nonEmpty) {
@@ -223,11 +249,14 @@ object Configuration extends DefaultConfiguration {
         atps.filter(_.contains("=")).map{(s : String)  =>
           val eses = s.split("=",2)
           (eses(0), eses(1).toInt)
-        }.toMap.withDefault(_ => ATP_STD_TIMEOUT)
+        }.toMap.withDefault(_ => DEFAULT_ATP_TIMEOUT)
       }
-      else Map().withDefault(_ => ATP_STD_TIMEOUT)
+      else Map().withDefault(_ => DEFAULT_ATP_TIMEOUT)
     }
   }
+
+  lazy val CONCURRENT_TRANSLATE : Boolean = isSet(PARAM_CONCURRENT_TRANSLATE)
+
 
   final val CAPS: String =
     """
@@ -383,10 +412,15 @@ trait DefaultConfiguration {
   val DEFAULT_PRIMSUBST = 1
   val DEFAULT_PRE_PRIMSUBST = -1
   val DEFAULT_PRE_PRIMSUBST_MAXDEPTH = 5
-  val DEFAULT_ATPCHECKINTERVAL = 3
-  val DEFAULT_ATPCALLINTERVAL = 10
+  val DEFAULT_ATPCALLINTERVAL = 15
+  val DEFAULT_ATP_TIMEOUT = 15
   val DEFAULT_ATPMAXJOBS = 2
   val DEFAULT_PASSMARK = 0.56
   val DEFAULT_AGING = 2.35
   val DEFAULT_CHOICE = true
+  val DEFAULT_TERMORDERING = leo.datastructures.impl.orderings.TO_CPO_Naive
+  val DEFAULT_PAR_SCHED = 3
+  val DEFAULT_RENAMING = true
+  val DEFAULT_FUNCSPEC = false
+  val DEFAULT_DOMCONSTR = 0
 }

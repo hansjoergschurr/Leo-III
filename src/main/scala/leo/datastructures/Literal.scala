@@ -12,8 +12,6 @@ import leo.Configuration
  * @note Oct. 2015: Substantially updated (literals as equations)
  */
 trait Literal extends Pretty with Prettier {
-  /** The unique, increasing literal number. */
-  def id: Int
   /** The left side of the literal's equation.
     * Invariant: `left > right or !oriented` where > is a term ordering. */
   def left: Term
@@ -115,7 +113,6 @@ trait Literal extends Pretty with Prettier {
 
 object Literal {
   import leo.datastructures.impl.{LiteralImpl => LitImpl}
-  import leo.datastructures.Term.Symbol
   import leo.datastructures.Orderings._
 
   // Constructor methods
@@ -210,10 +207,10 @@ object Literal {
       while (j <= maxIdx) {
         val l2 = lits(j)
         val cmp = l1.compare(l2)(sig)
-        if (cmp == CMP_GT) {
+        if (cmp == CMP_GT) { // l1 > l2
           notmax = notmax :+ l2
           notstrictMax = notstrictMax :+ l2
-        } else if (cmp == CMP_LT) {
+        } else if (cmp == CMP_LT) { // l1 < l2
           notmax = notmax :+ l1
           notstrictMax = notstrictMax :+ l1
         } else if (cmp == CMP_EQ) {
@@ -221,7 +218,6 @@ object Literal {
           notstrictMax = notstrictMax :+ l2
         } else {
           // NC
-
         }
 
         j += 1
@@ -347,10 +343,26 @@ object Literal {
   /** Returns true iff the literal is trivial (i.e. l.left is syntactically equal to l.right). */
   final def trivial(l: Literal): Boolean = l.left == l.right
   /** If the method returns true both sides of the underlying equation are different/distinct. */
-  final def distinctSides(l: Literal): Boolean = (l.left, l.right) match {
-    case (Symbol(idl), Symbol(idr)) if idl != idr => idl <= leo.modules.HOLSignature.lastId && idr <= leo.modules.HOLSignature.lastId
+  final def distinctSides(l: Literal): Boolean = {
+    distinctSides0(l.left, l.right, 0)
+  }
+  private final def distinctSides0(left: Term, right: Term, depth: Int): Boolean = {
+    import leo.modules.HOLSignature.Not
+    import leo.modules.myAssert
+    import leo.datastructures.Term.{Symbol, Bound, :::>}
+    (left, right) match {
+      case (Symbol(idl), Symbol(idr)) if idl != idr => idl <= leo.modules.HOLSignature.lastId && idr <= leo.modules.HOLSignature.lastId
+      case (Bound(_, scopeL), Bound(_, scopeR)) if scopeL <= depth && scopeR <= depth => scopeL != scopeR
+      case (Not(a),b) if a == b => true
+      case (a, Not(b)) if a == b => true
+      case (_ :::> _, _ :::> _) =>
+        val (bodyLeft, absLeft) = collectLambdas(left)
+        val (bodyRight, absRight) = collectLambdas(right)
+        myAssert(absLeft == absRight)
+        distinctSides0(bodyLeft, bodyRight, depth + absLeft.size)
       // TODO: Extend to 'distinct symbols' from TPTP
-    case _ => false
+      case _ => false
+    }
   }
   /** Returns a term representation of the literal.
     * @return Term `s = t` if `polarity`; term `!(s = t)` if `!polarity`,

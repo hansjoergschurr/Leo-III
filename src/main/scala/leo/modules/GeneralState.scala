@@ -1,9 +1,11 @@
 package leo.modules
 
-import leo.datastructures.{Clause, ClauseProxy, Pretty, Signature}
+import leo.datastructures._
 import leo.modules.external.TptpProver
 import leo.modules.output.{SZS_Unknown, StatusSZS}
 import leo.modules.prover.{FVIndex, RunStrategy}
+
+import scala.collection.mutable
 
 /**
   *
@@ -29,11 +31,18 @@ trait GeneralState[T <: ClauseProxy] extends Pretty {
 
   def signature: Signature
 
+  def timeout: Int
+  def setTimeout(timeout: Int): Unit
+
   def runStrategy: RunStrategy
   def setRunStrategy(runStrategy: RunStrategy): Unit
 
   def symbolsInConjecture: Set[Signature.Key]
   def defConjSymbols(negConj: T): Unit
+
+  def addChoiceFunction(f: Term): Unit
+  def choiceFunctions: Map[Type, Set[Term]]
+  final def choiceFunctions(ty: Type): Set[Term] = choiceFunctions.getOrElse(ty, Set())
 
   def addInitial(cls: Set[T]): Unit
   def initialProblem: Set[T]
@@ -42,6 +51,12 @@ trait GeneralState[T <: ClauseProxy] extends Pretty {
 
   def isPolymorphic: Boolean
   def setPolymorphic(): Unit
+
+  def domainConstr : Map[Type, Set[Term]]
+  def addDomainConstr(ty : Type, instances : Set[Term]) : Unit
+
+  def renamingCash : mutable.Map[Term, (Term, Boolean, Boolean)]
+  def resetCash() : Unit
 }
 
 object GeneralState {
@@ -63,6 +78,13 @@ protected[modules] class GeneralStateImp[T <: ClauseProxy](sig : Signature) exte
   protected var initialProblem0: Set[T] = Set()
   protected var poly: Boolean = false
   protected var derivationCl: Option[T] = None
+  protected var choiceFunctions0: Map[Type, Set[Term]] = Map()
+  protected var timeout0: Int = _
+  protected var domainConstr0 : Map[Type, Set[Term]] = Map()
+  val renamingCash : mutable.Map[Term, (Term, Boolean, Boolean)] = mutable.Map()
+
+  final def timeout: Int = timeout0
+  final def setTimeout(timeout: Int): Unit = { timeout0 = timeout }
 
 
   def copyGeneral: GeneralState[T] = {
@@ -71,6 +93,10 @@ protected[modules] class GeneralStateImp[T <: ClauseProxy](sig : Signature) exte
     state.negConjecture0 = negConjecture0
     state.runStrategy0 = runStrategy0
     state.symbolsInConjecture0 = symbolsInConjecture0
+    state.choiceFunctions0 = choiceFunctions0
+    state.current_externalProvers = current_externalProvers
+    state.timeout0 = timeout0
+    state.domainConstr0 = domainConstr0
     state
   }
 
@@ -106,10 +132,29 @@ protected[modules] class GeneralStateImp[T <: ClauseProxy](sig : Signature) exte
   final def addInitial(cls: Set[T]): Unit = {initialProblem0 = initialProblem0 union cls}
   final def initialProblem: Set[T] = initialProblem0
 
+  final def addChoiceFunction(f: Term): Unit = {
+    val choiceType = f.ty._funDomainType._funDomainType
+    if (choiceFunctions0.isDefinedAt(choiceType)) {
+      choiceFunctions0 = choiceFunctions0 + ((choiceType, choiceFunctions0(choiceType) + f))
+    } else choiceFunctions0 = choiceFunctions0 + ((choiceType, Set(f)))
+    val meta = sig(Term.Symbol.unapply(f).get)
+    meta.updateProp(meta.flag | Signature.PropChoice)
+  }
+  final def choiceFunctions: Map[Type,Set[Term]] = choiceFunctions0
+  final def choiceFunctionCount: Int = {choiceFunctions0.map {case (k,v) => v.size}.sum}
+
   final def externalProvers: Set[TptpProver[T]] = current_externalProvers
   final def addExternalProver(prover: TptpProver[T]): Unit =  {
     current_externalProvers = current_externalProvers + prover
   }
+
+
+
+  override def domainConstr: Map[Type, Set[Term]] = domainConstr0
+  override def addDomainConstr(ty : Type, instances : Set[Term]): Unit = domainConstr0 += ty -> instances
+
+
+  override def resetCash(): Unit = renamingCash.clear()
 
   override def pretty: String = s"State (conj = ${conjecture0.pretty(sig)} , strategy = ${runStrategy0.pretty})"
 }
@@ -140,6 +185,8 @@ private class FVStateImpl[T <: ClauseProxy](sig : Signature) extends GeneralStat
     state.negConjecture0 = negConjecture0
     state.runStrategy0 = runStrategy0
     state.symbolsInConjecture0 = symbolsInConjecture0
+    state.choiceFunctions0 = choiceFunctions0
+    state.domainConstr0 = domainConstr0
     state
   }
 

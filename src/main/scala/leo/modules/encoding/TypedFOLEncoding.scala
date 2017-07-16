@@ -177,7 +177,7 @@ object TypedFOLEncoding {
     import Term.{:::>, TypeLambda, Bound, Symbol, ∙}
     import leo.modules.HOLSignature.{Forall => HOLForall, Exists => HOLExists, TyForall => HOLTyForall,
     & => HOLAnd, ||| => HOLOr, === => HOLEq, !=== => HOLNeq, <=> => HOLEquiv, Impl => HOLImpl, <= => HOLIf,
-    Not => HOLNot, LitFalse => HOLFalse, LitTrue => HOLTrue}
+    Not => HOLNot, LitFalse => HOLFalse, LitTrue => HOLTrue, Choice => HOLChoice}
     import TypedFOLEncodingSignature._
     t match {
       // cases from here should not really happen if invoked from func-ext treated CNF problem.
@@ -193,6 +193,10 @@ object TypedFOLEncoding {
       case HOLTyForall(TypeLambda(body)) =>
         val translatedBody = translate(body,les)(holSignature, encodingSignature)
         TyForall(Λ(translatedBody))
+      case HOLChoice(body) =>
+        val translatedBody = translateTerm(body,les)(holSignature, encodingSignature)
+        val result = encodingSignature.proxyChoice(translatedBody)
+        encodingSignature.hBool(result)
       case HOLEq(l,r) =>
         assert(l.ty == r.ty)
         if (l.ty == o) {
@@ -282,7 +286,7 @@ object TypedFOLEncoding {
     import Term.{Bound, :::>, ∙, Symbol, TypeLambda}
     import leo.modules.HOLSignature.{Forall => HOLForall, Exists => HOLExists,
     & => HOLAnd, ||| => HOLOr, === => HOLEq, !=== => HOLNeq, <=> => HOLEquiv, Impl => HOLImpl, <= => HOLIf,
-    Not => HOLNot, LitFalse => HOLFalse, LitTrue => HOLTrue}
+    Not => HOLNot, LitFalse => HOLFalse, LitTrue => HOLTrue, Choice => HOLChoice}
     import encodingSignature._
     leo.Out.finest(s"TranslateTerm: ${t.pretty(holSignature)}")
     t match {
@@ -302,6 +306,7 @@ object TypedFOLEncoding {
             case HOLImpl.key => proxyImpl
             case HOLIf.key => proxyIf
             case HOLEquiv.key => proxyEquiv
+            case HOLChoice.key => proxyChoice
             case _ =>
               val fName = escape(holSignature(id).name)
               mkAtom(encodingSignature(fName).key)(encodingSignature)
@@ -549,7 +554,7 @@ object TypedFOLEncodingSignature {
   final val Forall: Term = mkAtom(13, aoo)
   final def Forall(body: Term): Term = mkApp(Forall, Seq(Right(body.ty._funDomainType), Left(body)))
   final val Exists: Term = mkAtom(14, aoo)
-  final def Exists(body: Term): Term = mkApp(Forall, Seq(Right(body.ty._funDomainType), Left(body)))
+  final def Exists(body: Term): Term = mkApp(Exists, Seq(Right(body.ty._funDomainType), Left(body)))
   final val TyForall: Term = mkAtom(15, faoo)
   final def TyForall(body: Term): Term = mkTermApp(TyForall, body)
 
@@ -601,6 +606,7 @@ object TypedFOLEncodingSignature {
   final val proxyExists_name: String = "exists"
   final val proxyEq_name: String = "eq"
   final val proxyNeq_name: String = "neq"
+  final val proxyChoice_name: String = "choice"
 
   final val proxyOf: Map[String, String] = Map(
     "$true" -> safeName(proxyTrue_name),
@@ -614,7 +620,8 @@ object TypedFOLEncodingSignature {
     "!" -> safeName(proxyForall_name),
     "?" -> safeName(proxyExists_name),
     "=" -> safeName(proxyEq_name),
-    "!=" -> safeName(proxyNeq_name)
+    "!=" -> safeName(proxyNeq_name),
+    "@+" -> safeName(proxyChoice_name)
   )
 }
 
@@ -787,6 +794,14 @@ trait TypedFOLEncodingSignature extends Signature {
   lazy val proxyNeq: Term = mkAtom(proxyNeq_id)(this)
   final def proxyNeq(l: Term, r: Term): Term = applyArgs(mkTypeApp(proxyNeq, l.ty), Seq(l, r))
 
+  ///// choice
+  lazy val proxyChoice_id: Signature.Key = proxyId(proxyChoice_name)
+  lazy val proxyChoice: Term = mkAtom(proxyChoice_id)(this)
+  final def proxyChoice(pred: Term): Term = {
+    val domainType = encodedFunSpaces(pred.ty)._1
+    applyArgs(mkTypeApp(proxyChoice,domainType), Seq(pred))
+  }
+
   private var usedProxies: Set[Signature.Key] = Set.empty
   final def proxiesUsed: Set[Signature.Key] = usedProxies
 
@@ -809,6 +824,9 @@ trait TypedFOLEncodingSignature extends Signature {
       case `proxyNeq_name` => Equiv(Neq(polyX, polyY), hBool(proxyNeq(polyX,polyY)))
       case `proxyForall_name` => Equiv(Forall(λ(1)(hBool(hApp(mkBound(funTy(1,boolTy), 2), mkBound(1,1))))),hBool(proxyForall(mkBound(funTy(1,boolTy), 1))))
       case `proxyExists_name` => Equiv(Exists(λ(1)(hBool(hApp(mkBound(funTy(1,boolTy), 2), mkBound(1,1))))),hBool(proxyExists(mkBound(funTy(1,boolTy), 1))))
+      case `proxyChoice_name` =>
+        val choiceProp =  mkBound(funTy(1,boolTy), 2)
+        Or(Not(hBool(applyArgs(choiceProp, Seq(polyX)))), hBool(applyArgs(choiceProp, Seq(proxyChoice(choiceProp)))))
       case _ => throw new IllegalArgumentException("Given id is not an proxy.")
     }
   }

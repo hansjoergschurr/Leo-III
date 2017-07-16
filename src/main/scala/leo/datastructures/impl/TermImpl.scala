@@ -436,13 +436,12 @@ protected[impl] case class TermAbstr(typ: Type, body: Term) extends TermImpl {
   final def etaContract0: TermImpl = {
     import Term.{∙, TypeLambda, Bound}
     val (body0, abstractedTypes) = collectLambdas(this)
-    println(s"body0: ${body0.pretty}")
     body0 match {
       case Root(f, args) =>
         var revArgs = args.asTerms.reverse
         var curEtaArg = 0
         var done = false
-        while(revArgs.nonEmpty && !done) {
+        while(revArgs.nonEmpty && !done && curEtaArg < abstractedTypes.size) {
           val arg = revArgs.head
           if (arg.isRight) done = true
           else {
@@ -460,15 +459,12 @@ protected[impl] case class TermAbstr(typ: Type, body: Term) extends TermImpl {
             } else done = true
           }
         }
-        println(s"curetaarg after finish: $curEtaArg")
-        println(s"abstracted types: ${abstractedTypes.size}")
         if (curEtaArg > 0) {
           val contractedArgs = args.dropRight(curEtaArg).etaContract
           val result = Root(f, contractedArgs)
           val lowered = result.substitute(Subst.shift(-curEtaArg)) // TODO: Check
           abstractedTypes.dropRight(curEtaArg).foldRight(lowered.asInstanceOf[TermImpl]){case (ty, term) => TermAbstr(ty, term)}
         } else abstractedTypes.foldRight(body0.asInstanceOf[TermImpl].etaContract0){case (ty, term) => TermAbstr(ty, term)}
-      case TypeLambda(_) => assert(false); throw new IllegalArgumentException
       case _ => assert(false); throw new IllegalArgumentException
     }
   }
@@ -577,14 +573,14 @@ protected[impl] case class TermClos(term: Term, σ: (Subst, Subst)) extends Term
   def δ_expand_upTo(symbs: Set[Signature.Key])(implicit sig: Signature): Term = ???
 
   // Queries on terms
-  lazy val ty = term.ty
+  final def ty = term.ty
   final def fv: Set[(Int, Type)] = betaNormalize.fv
   final def tyFV: Set[Int] = betaNormalize.tyFV
   final def symbolMap: Map[Signature.Key, (Count, Depth)] = betaNormalize.asInstanceOf[TermImpl].symbolMap
   final def headSymbol = betaNormalize.headSymbol
   final def headSymbolDepth = 1 + term.headSymbolDepth
   final def feasibleOccurrences = betaNormalize.feasibleOccurrences
-  lazy val size = term.size // this might not be reasonable, but will never occur when used properly
+  final def size = term.size // this might not be reasonable, but will never occur when used properly
 
   // Other operations
   final def etaExpand0: TermImpl = betaNormalize.asInstanceOf[TermImpl].etaExpand0
@@ -995,16 +991,17 @@ object TermImpl extends TermBank {
   // shared terms
   /////////////////////////////////////////////
   import scala.collection.mutable
-  import mutable.{WeakHashMap => WMap, HashMap => MMap}
+//  import mutable.{WeakHashMap => WMap, HashMap => MMap}
+  import scala.collection.concurrent.{TrieMap => MMap}
 
   // atomic symbols (heads)
-  final protected[TermImpl] val boundAtoms: WMap[Type, WMap[Int, WeakReference[Head]]] = WMap.empty
+  final protected[TermImpl] val boundAtoms: MMap[Type, MMap[Int, WeakReference[Head]]] = MMap.empty
   final protected[TermImpl] val symbolAtoms: mutable.Map[Signature.Key, WeakReference[Head]] = mutable.Map.empty
   // composite terms
-  final protected[TermImpl] val termAbstractions: WMap[Term, WMap[Type, WeakReference[TermImpl]]] = WMap.empty
-  final protected[TermImpl] val typeAbstractions: WMap[Term, WeakReference[TermImpl]] = WMap.empty
-  final protected[TermImpl] val roots: WMap[Head, WMap[Spine, WeakReference[TermImpl]]] = WMap.empty
-  final protected[TermImpl] val redexes: WMap[Term, WMap[Spine, WeakReference[Redex]]] = WMap.empty
+  final protected[TermImpl] val termAbstractions: MMap[Term, MMap[Type, WeakReference[TermImpl]]] = MMap.empty
+  final protected[TermImpl] val typeAbstractions: MMap[Term, WeakReference[TermImpl]] = MMap.empty
+  final protected[TermImpl] val roots: MMap[Head, MMap[Spine, WeakReference[TermImpl]]] = MMap.empty
+  final protected[TermImpl] val redexes: MMap[Term, MMap[Spine, WeakReference[Redex]]] = MMap.empty
   // Spines
   final protected[TermImpl] val spines: MMap[Either[Term, Type], MMap[Spine, WeakReference[Spine]]] = MMap.empty
 
@@ -1038,7 +1035,7 @@ object TermImpl extends TermBank {
     }
   @inline final private def mkBoundAtom0(ty: Type, scope: Int): Head = {
     val hd = BoundIndex(ty, scope)
-    boundAtoms += (ty -> WMap(scope -> WeakReference(hd)))
+    boundAtoms += (ty -> MMap(scope -> WeakReference(hd)))
     hd
   }
   @inline final private def mkBoundAtom1(ty: Type, scope: Int): Head = {
@@ -1063,7 +1060,7 @@ object TermImpl extends TermBank {
     }
   @inline final private def mkRoot0(hd: Head, args: Spine): TermImpl = {
     val root = Root(hd, args)
-    roots += (hd -> WMap(args -> WeakReference(root)))
+    roots += (hd -> MMap(args -> WeakReference(root)))
     root._sharing = true
     root
   }
@@ -1089,7 +1086,7 @@ object TermImpl extends TermBank {
     }
   @inline final private def mkRedex0(left: Term, args: Spine): Redex = {
     val redex = Redex(left, args)
-    redexes += (left -> WMap(args -> WeakReference(redex)))
+    redexes += (left -> MMap(args -> WeakReference(redex)))
     redex._sharing = true
     redex
   }
@@ -1115,7 +1112,7 @@ object TermImpl extends TermBank {
     }
   @inline final private def mkTermAbstr0(ty: Type, body: Term): TermImpl = {
     val abs = TermAbstr(ty, body)
-    termAbstractions += (body -> WMap(ty -> WeakReference(abs)))
+    termAbstractions += (body -> MMap(ty -> WeakReference(abs)))
     abs._sharing = true
     abs
   }

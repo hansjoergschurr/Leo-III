@@ -4,7 +4,7 @@ import leo.datastructures._
 import Term._
 import leo.datastructures.Type._
 import leo.datastructures._
-import leo.modules.HOLSignature.{LitFalse, |||, &, Not, Forall, Exists, TyForall, !===, ===, Impl, <=, <=>, ~&, ~|||, <~>}
+import leo.modules.HOLSignature.{LitFalse, |||, &, Not, Forall, Exists, TyForall, Choice, !===, ===, Impl, <=, <=>, ~&, ~|||, <~>}
 import leo.modules.SZSException
 
 import scala.annotation.tailrec
@@ -164,9 +164,10 @@ object ToTPTP {
   final def apply(sig: Signature): String = {
     val sb: StringBuilder = new StringBuilder
     for (id <- sig.typeConstructors intersect sig.allUserConstants) {
-      val name = tptpEscapeName(sig(id).name+"_type")
+      val name = tptpEscapeName(sig(id).name)
+      val name_type = tptpEscapeName(sig(id).name+"_type")
       sb.append("thf(")
-      sb.append(name)
+      sb.append(name_type)
       sb.append(",type,(")
       sb.append(name)
       sb.append(":")
@@ -174,9 +175,10 @@ object ToTPTP {
       sb.append(")).\n")
     }
     for (id <- sig.uninterpretedSymbols) {
-      val name = tptpEscapeName(sig(id).name+"_type")
+      val name = tptpEscapeName(sig(id).name)
+      val name_type = tptpEscapeName(sig(id).name+"_type")
       sb.append("thf(")
-      sb.append(name)
+      sb.append(name_type)
       sb.append(",type,(")
       sb.append(name)
       sb.append(":")
@@ -220,7 +222,7 @@ object ToTPTP {
               case e: Exception => leo.Out.warn(s"Could not translate substitution entry to TPTP format, Exception raised:\n${e.toString}")
                 sb.append(s"bind($i, $$thf(${erg.pretty}))")
             }
-           if (i <= max) sb.append(",")
+           if (i < max) sb.append(",")
           }
           i = i + 1
         }
@@ -334,6 +336,12 @@ object ToTPTP {
         }
       case TyForall(_) => val (tyAbsCount, body) = collectTyForall(t)
         s"! [${(1 to tyAbsCount).map(i => "T" + intToName(i - 1) + ": $tType").mkString(",")}]: (${toTPTP0(body, tyVarCount+tyAbsCount, bVars)(sig)})"
+      case Choice(_) => val (bVarTys, body) = collectChoice(t)
+                        val newBVars = makeBVarList(bVarTys, bVars.size)
+        body match {
+          case Forall(_) | Exists(_) | Not(_) => s"${sig(Choice.key).name} [${newBVars.map({case (s,ty) => s"$s:${typeToTHF0(ty,tyVarCount)(sig)}"}).mkString(",")}]: ${toTPTP0(body, tyVarCount, fusebVarListwithMap(newBVars,bVars))(sig)}"
+          case _ => s"${sig(Choice.key).name} [${newBVars.map({case (s,ty) => s"$s:${typeToTHF0(ty, tyVarCount)(sig)}"}).mkString(",")}]: (${toTPTP0(body, tyVarCount, fusebVarListwithMap(newBVars,bVars))(sig)})"
+        }
       // Binary connectives
       case t1 ||| t2 => t1 match {
         case _ ||| _| Not(_) | Forall(_) | Exists(_) => t2 match {
@@ -382,11 +390,16 @@ object ToTPTP {
       case t1 ~||| t2 => s"(${toTPTP0(t1,tyVarCount, bVars)(sig)}) ${sig(~|||.key).name} (${toTPTP0(t2, tyVarCount,bVars)(sig)})"
       case t1 <~> t2 => s"(${toTPTP0(t1,tyVarCount, bVars)(sig)}) ${sig(<~>.key).name} (${toTPTP0(t2, tyVarCount,bVars)(sig)})"
       // General structure
-      case _ :::> _ => val (bVarTys, body) = collectLambdas(t)
-                       val newBVars = makeBVarList(bVarTys, bVars.size)
-        body match {
-          case Forall(_) | Exists(_) | Not(_) => s"^ [${newBVars.map({case (s,ty) => s"$s:${typeToTHF0(ty, tyVarCount)(sig)}"}).mkString(",")}]: ${toTPTP0(body, tyVarCount,fusebVarListwithMap(newBVars, bVars))(sig)}"
-          case _ => s"^ [${newBVars.map({case (s,ty) => s"$s:${typeToTHF0(ty, tyVarCount)(sig)}"}).mkString(",")}]: (${toTPTP0(body, tyVarCount,fusebVarListwithMap(newBVars, bVars))(sig)})"
+      case _ :::> _ =>
+        val t0 = t.etaContract
+        if (t != t0) toTPTP0(t0, tyVarCount, bVars)(sig)
+        else {
+          val (bVarTys, body) = collectLambdas(t)
+          val newBVars = makeBVarList(bVarTys, bVars.size)
+          body match {
+            case Forall(_) | Exists(_) | Not(_) => s"^ [${newBVars.map({case (s,ty) => s"$s:${typeToTHF0(ty, tyVarCount)(sig)}"}).mkString(",")}]: ${toTPTP0(body, tyVarCount,fusebVarListwithMap(newBVars, bVars))(sig)}"
+            case _ => s"^ [${newBVars.map({case (s,ty) => s"$s:${typeToTHF0(ty, tyVarCount)(sig)}"}).mkString(",")}]: (${toTPTP0(body, tyVarCount,fusebVarListwithMap(newBVars, bVars))(sig)})"
+          }
         }
       case TypeLambda(_) => val (tyAbsCount, body) = collectTyLambdas(0, t)
         s"^ [${(1 to tyAbsCount).map(i => "T" + intToName(i - 1) + ": $tType").mkString(",")}]: (${toTPTP0(body, tyVarCount+tyAbsCount,bVars)(sig)})"
@@ -446,7 +459,7 @@ object ToTPTP {
   @inline final private def collectForall0(vars: Seq[Type], t: Term): (Seq[Type], Term) = {
     t match {
       case Forall(ty :::> b) => collectForall0(vars :+ ty, b)
-      case Forall(_) => throw new IllegalArgumentException("Unexcepted body term in all quantification decomposition.")
+      case Forall(_) => collectForall0(vars, t.etaExpand)
       case _ => (vars, t)
     }
   }
@@ -473,7 +486,20 @@ object ToTPTP {
   @inline final private def collectExists0(vars: Seq[Type], t: Term): (Seq[Type], Term) = {
     t match {
       case Exists(ty :::> b) => collectExists0(vars :+ ty, b)
-      case Exists(_) => throw new IllegalArgumentException("Unexcepted body term in existsl quantification decomposition.")
+      case Exists(_) => collectExists0(vars, t.etaExpand)
+      case _ => (vars, t)
+    }
+  }
+
+  /** Gather consecutive all-quantifications (nameless). */
+  final private def collectChoice(t: Term): (Seq[Type], Term) = {
+    collectChoice0(Seq.empty, t)
+  }
+  @tailrec
+  @inline final private def collectChoice0(vars: Seq[Type], t: Term): (Seq[Type], Term) = {
+    t match {
+      case Choice(ty :::> b) => collectChoice0(vars :+ ty, b)
+      case Choice(body) => collectChoice0(vars, Choice(body.etaExpand))
       case _ => (vars, t)
     }
   }

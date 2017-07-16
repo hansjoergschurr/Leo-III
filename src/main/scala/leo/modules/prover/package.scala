@@ -28,7 +28,8 @@ package object prover {
     if (state.negConjecture != null) {
       Out.info(s"Found a conjecture and ${effectiveInput.size} axioms. Running axiom selection ...")
       // Do relevance filtering: Filter hopefully unnecessary axioms
-      val relevantAxioms = Control.getRelevantAxioms(effectiveInput, conj)(state.signature)
+      val relevantAxioms = if (effectiveInput.size <= 15) effectiveInput
+                            else Control.getRelevantAxioms(effectiveInput, conj)(state.signature)
       Out.info(s"Axiom selection finished. Selected ${relevantAxioms.size} axioms " +
         s"(removed ${effectiveInput.size - relevantAxioms.size} axioms).")
       relevantAxioms.map(ax => processInput(ax, state))
@@ -102,19 +103,19 @@ package object prover {
   //// Further Utility
   ////////////////////////////////////
   final def typeCheck(input: Seq[AnnotatedClause], state: LocalGeneralState): Unit = {
-    if (state.negConjecture != null) typeCheck0(state.negConjecture +: input)
-    else typeCheck0(input)
+    if (state.negConjecture != null) typeCheck0(state.negConjecture +: input, state)
+    else typeCheck0(input, state)
   }
-  @tailrec final private def typeCheck0(input: Seq[AnnotatedClause]): Unit = {
+  @tailrec final private def typeCheck0(input: Seq[AnnotatedClause], state: LocalGeneralState): Unit = {
     if (input.nonEmpty) {
       val hd = input.head
       val term = hd.cl.lits.head.left
       import leo.modules.HOLSignature.o
       if (!Term.wellTyped(term) || term.ty != o) {
         leo.Out.severe(s"Input problem did not pass type check: ${hd.id} is ill-typed.")
-        throw new SZSException(SZS_TypeError, s"Type error in formula ${hd.id}")
+        throw new SZSException(SZS_TypeError, s"Type error in formula ${hd.id}: ${hd.pretty(state.signature)}")
       } else {
-        typeCheck0(input.tail)
+        typeCheck0(input.tail, state)
       }
     }
   }

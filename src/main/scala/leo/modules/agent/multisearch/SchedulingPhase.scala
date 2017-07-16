@@ -25,12 +25,14 @@ object SchedulingPhase {
 /**
   * Created by mwisnie on 6/7/17.
   */
-class SchedulingPhase(tactics : Iterator[RunStrategy],
+class SchedulingPhase(tactics : Schedule,
                       implicit val state : GeneralState[AnnotatedClause])
                      (scheduler: Scheduler,
                       blackboard: Blackboard)
   extends CompletePhase(blackboard, scheduler, SchedulingPhase.endBy, Seq(CompletedState)) {
   override def name: String = "SchedulingPhase"
+
+  var resultState = state
 
   override protected val agents: Seq[Agent] = Seq()
   implicit val sig : Signature = state.signature
@@ -80,8 +82,9 @@ class SchedulingPhase(tactics : Iterator[RunStrategy],
     while(it.nonEmpty){
       val s = it.next()
       if(s.szsStatus == SZS_Theorem) {
-        state.setSZSStatus(SZS_Theorem)
-        s.derivationClause.foreach(c => state.setDerivationClause(c))
+        resultState = s
+      } else if(resultState.szsStatus != SZS_Theorem) {
+        resultState = s
       }
     }
     true

@@ -3,10 +3,11 @@ package leo.modules.calculus
 import leo._
 import leo.datastructures.Term.{:::>, TypeLambda}
 import leo.datastructures.{Clause, Subst, Type, _}
-import leo.modules.HOLSignature.{&, ===, !===, Exists, Forall, TyForall, Impl, LitFalse, LitTrue, Not, |||}
-import leo.modules.output.{SZS_EquiSatisfiable, SZS_Theorem}
+import leo.modules.HOLSignature.{!===, &, ===, Exists, Forall, Impl, LitFalse, LitTrue, Not, TyForall, |||}
+import leo.modules.output.{SZS_EquiSatisfiable, SZS_Theorem, SuccessSZS}
 
 import scala.annotation.tailrec
+import scala.collection.mutable
 
 /**
   * Created by lex on 5/12/16.
@@ -166,18 +167,18 @@ object RenameCNF extends CalculusRule {
 
   final def canApply(cl: Clause): Boolean = cl.lits.exists(canApply)
 
-  final def apply(vargen : leo.modules.calculus.FreshVarGen, cl : Clause, THRESHHOLD : Int = 0)(implicit sig: Signature) : Seq[Clause] = {
+  final def apply(vargen : leo.modules.calculus.FreshVarGen, cashExtracts : mutable.Map[Term, (Term, Boolean, Boolean)], cl : Clause, THRESHHOLD : Int = 0)(implicit sig: Signature) : Seq[Clause] = {
     val lits = cl.lits
-    val normLits = apply(vargen, lits, THRESHHOLD)
+    val normLits = apply(vargen, cashExtracts, lits, THRESHHOLD)
     normLits.map{ls => Clause(ls)}
   }
 
-  final def apply(vargen: leo.modules.calculus.FreshVarGen, l : Seq[Literal], THRESHHOLD : Int)(implicit sig: Signature): (Seq[Seq[Literal]]) = {
+  final def apply(vargen: leo.modules.calculus.FreshVarGen, cashExtracts : mutable.Map[Term, (Term, Boolean, Boolean)], l : Seq[Literal], THRESHHOLD : Int)(implicit sig: Signature): (Seq[Seq[Literal]]) = {
     var acc : Seq[Seq[Literal]] = Seq(Seq())
     val it : Iterator[Literal] = l.iterator
     while(it.hasNext){
       val nl = it.next()
-      apply(vargen, nl, THRESHHOLD) match {
+      apply(vargen, cashExtracts, nl, THRESHHOLD) match {
         case Seq(Seq(lit)) => acc = acc.map{normLits => lit +: normLits}
         case norms =>  acc = multiply(norms, acc)
       }
@@ -185,33 +186,33 @@ object RenameCNF extends CalculusRule {
     acc
   }
 
-  final def apply(vargen: leo.modules.calculus.FreshVarGen, l : Literal,THRESHHOLD : Int)(implicit sig: Signature): Seq[Seq[Literal]] = apply0(vargen.existingVars, vargen.existingTyVars, vargen, l, THRESHHOLD)
+  final def apply(vargen: leo.modules.calculus.FreshVarGen, cashExtracts : mutable.Map[Term, (Term, Boolean, Boolean)], l : Literal,THRESHHOLD : Int)(implicit sig: Signature): Seq[Seq[Literal]] = apply0(vargen.existingVars, vargen.existingTyVars, vargen, cashExtracts, l, THRESHHOLD)
 
   @inline
-  final private def apply0(fvs: FVs, tyFVs: TyFVS, vargen: leo.modules.calculus.FreshVarGen, l : Literal, THRESHHOLD : Int)(implicit sig: Signature): Seq[Seq[Literal]] = if(!l.equational){
+  final private def apply0(fvs: FVs, tyFVs: TyFVS, vargen: leo.modules.calculus.FreshVarGen, cashExtracts : mutable.Map[Term, (Term, Boolean, Boolean)], l : Literal, THRESHHOLD : Int)(implicit sig: Signature): Seq[Seq[Literal]] = if(!l.equational){
     if(FormulaRenaming.canApply(l, THRESHHOLD)) {
-      val (replLit, defl1, defl2) = FormulaRenaming.apply(l)
+      val (replLit, defl1, defl2) = FormulaRenaming.apply(l, cashExtracts)
       if(defl1 == null && defl2 == null){
-        apply0(fvs, tyFVs, vargen, replLit, THRESHHOLD)
+        apply0(fvs, tyFVs, vargen, cashExtracts, replLit, THRESHHOLD)
       } else {
         assert(defl1 != null && defl2 != null, "Non consistent definition returend in formula renaming.")
-        apply0(fvs, tyFVs, vargen, replLit, THRESHHOLD) ++ multiply(apply0(fvs, tyFVs, vargen, defl1, THRESHHOLD), apply0(fvs, tyFVs, vargen, defl2, THRESHHOLD))
+        apply0(fvs, tyFVs, vargen, cashExtracts, replLit, THRESHHOLD) ++ multiply(apply0(fvs, tyFVs, vargen, cashExtracts, defl1, THRESHHOLD), apply0(fvs, tyFVs, vargen, cashExtracts, defl2, THRESHHOLD))
       }
     } else {
     l.left match {
-      case Not(t) => apply0(fvs, tyFVs, vargen, Literal(t, !l.polarity), THRESHHOLD)
-      case &(lt,rt) if l.polarity => apply0(fvs, tyFVs, vargen, Literal(lt,true), THRESHHOLD) ++ apply0(fvs, tyFVs, vargen, Literal(rt,true), THRESHHOLD)
-      case &(lt,rt) if !l.polarity => multiply(apply0(fvs, tyFVs, vargen, Literal(lt,false), THRESHHOLD), apply0(fvs, tyFVs, vargen, Literal(rt, false), THRESHHOLD))
-      case |||(lt,rt) if l.polarity => multiply(apply0(fvs, tyFVs, vargen, Literal(lt,true),THRESHHOLD), apply0(fvs, tyFVs, vargen, Literal(rt, true),THRESHHOLD))
-      case |||(lt,rt) if !l.polarity => apply0(fvs, tyFVs, vargen, Literal(lt,false),THRESHHOLD) ++ apply0(fvs, tyFVs, vargen, Literal(rt,false),THRESHHOLD)
-      case Impl(lt,rt) if l.polarity => multiply(apply0(fvs, tyFVs, vargen, Literal(lt,false),THRESHHOLD), apply0(fvs, tyFVs, vargen, Literal(rt, true),THRESHHOLD))
-      case Impl(lt,rt) if !l.polarity => apply0(fvs, tyFVs, vargen, Literal(lt,true),THRESHHOLD) ++ apply0(fvs, tyFVs, vargen, Literal(rt,false),THRESHHOLD)
-      case Forall(a@(ty :::> t)) if l.polarity => val v = vargen.next(ty); apply0(v +: fvs, tyFVs, vargen, Literal(Term.mkTermApp(a, Term.mkBound(v._2, v._1)).betaNormalize.etaExpand, true),THRESHHOLD)
-      case Forall(a@(ty :::> t)) if !l.polarity => val sko = leo.modules.calculus.skTerm(ty, fvs, tyFVs); apply0(fvs, tyFVs, vargen, Literal(Term.mkTermApp(a, sko).betaNormalize.etaExpand, false),THRESHHOLD)
-      case Exists(a@(ty :::> t)) if l.polarity => val sko = leo.modules.calculus.skTerm(ty, fvs, tyFVs); apply0(fvs, tyFVs, vargen, Literal(Term.mkTermApp(a, sko).betaNormalize.etaExpand, true),THRESHHOLD)
-      case Exists(a@(ty :::> t)) if !l.polarity => val v = vargen.next(ty); apply0(v +: fvs, tyFVs, vargen, Literal(Term.mkTermApp(a, Term.mkBound(v._2, v._1)).betaNormalize.etaExpand, false),THRESHHOLD)
-      case TyForall(a@TypeLambda(t)) if l.polarity => val ty = vargen.next(); apply0(fvs, ty +: tyFVs, vargen, Literal(Term.mkTypeApp(a, Type.mkVarType(ty)).betaNormalize.etaExpand, true),THRESHHOLD)
-      case TyForall(a@TypeLambda(t)) if !l.polarity => val sko = leo.modules.calculus.skType(tyFVs); apply0(fvs, tyFVs, vargen, Literal(Term.mkTypeApp(a, sko).betaNormalize.etaExpand, false),THRESHHOLD)
+      case Not(t) => apply0(fvs, tyFVs, vargen, cashExtracts, Literal(t, !l.polarity), THRESHHOLD)
+      case &(lt,rt) if l.polarity => apply0(fvs, tyFVs, vargen, cashExtracts, Literal(lt,true), THRESHHOLD) ++ apply0(fvs, tyFVs, vargen, cashExtracts, Literal(rt,true), THRESHHOLD)
+      case &(lt,rt) if !l.polarity => multiply(apply0(fvs, tyFVs, vargen, cashExtracts, Literal(lt,false), THRESHHOLD), apply0(fvs, tyFVs, vargen, cashExtracts, Literal(rt, false), THRESHHOLD))
+      case |||(lt,rt) if l.polarity => multiply(apply0(fvs, tyFVs, vargen, cashExtracts, Literal(lt,true),THRESHHOLD), apply0(fvs, tyFVs, vargen, cashExtracts, Literal(rt, true),THRESHHOLD))
+      case |||(lt,rt) if !l.polarity => apply0(fvs, tyFVs, vargen, cashExtracts, Literal(lt,false),THRESHHOLD) ++ apply0(fvs, tyFVs, vargen, cashExtracts, Literal(rt,false),THRESHHOLD)
+      case Impl(lt,rt) if l.polarity => multiply(apply0(fvs, tyFVs, vargen, cashExtracts, Literal(lt,false),THRESHHOLD), apply0(fvs, tyFVs, vargen, cashExtracts, Literal(rt, true),THRESHHOLD))
+      case Impl(lt,rt) if !l.polarity => apply0(fvs, tyFVs, vargen, cashExtracts, Literal(lt,true),THRESHHOLD) ++ apply0(fvs, tyFVs, vargen, cashExtracts, Literal(rt,false),THRESHHOLD)
+      case Forall(a@(ty :::> t)) if l.polarity => val v = vargen.next(ty); apply0(v +: fvs, tyFVs, vargen, cashExtracts, Literal(Term.mkTermApp(a, Term.mkBound(v._2, v._1)).betaNormalize.etaExpand, true),THRESHHOLD)
+      case Forall(a@(ty :::> t)) if !l.polarity => val sko = leo.modules.calculus.skTerm(ty, fvs, tyFVs); apply0(fvs, tyFVs, vargen, cashExtracts, Literal(Term.mkTermApp(a, sko).betaNormalize.etaExpand, false),THRESHHOLD)
+      case Exists(a@(ty :::> t)) if l.polarity => val sko = leo.modules.calculus.skTerm(ty, fvs, tyFVs); apply0(fvs, tyFVs, vargen, cashExtracts, Literal(Term.mkTermApp(a, sko).betaNormalize.etaExpand, true),THRESHHOLD)
+      case Exists(a@(ty :::> t)) if !l.polarity => val v = vargen.next(ty); apply0(v +: fvs, tyFVs, vargen, cashExtracts, Literal(Term.mkTermApp(a, Term.mkBound(v._2, v._1)).betaNormalize.etaExpand, false),THRESHHOLD)
+      case TyForall(a@TypeLambda(t)) if l.polarity => val ty = vargen.next(); apply0(fvs, ty +: tyFVs, vargen, cashExtracts, Literal(Term.mkTypeApp(a, Type.mkVarType(ty)).betaNormalize.etaExpand, true),THRESHHOLD)
+      case TyForall(a@TypeLambda(t)) if !l.polarity => val sko = leo.modules.calculus.skType(tyFVs); apply0(fvs, tyFVs, vargen, cashExtracts, Literal(Term.mkTypeApp(a, sko).betaNormalize.etaExpand, false),THRESHHOLD)
       case _ => Seq(Seq(l))
     }}
   } else {
@@ -620,6 +621,41 @@ object ACSimp extends CalculusRule {
   }
 }
 
+
+object DomainConstraintInstances extends CalculusRule {
+  override def name: String = "domainConstraint"
+  override def inferenceStatus: SuccessSZS = SZS_Theorem  // TODO what is the status?
+
+  final def apply(c : Clause, domain : Map[Type, Set[Term]], maxInstances : Int)(implicit sig : Signature) : Set[Clause] = {
+    var currentInstances = 1
+    var clauses = Set(c)
+    // consider only variables with domain constraints
+    val varToInstance = c.implicitlyBound.filter(v => domain.contains(v._2))
+    if(varToInstance.isEmpty) return Set(c)
+    // Sort for amount of minimal terms to instanciate to maximize the amount of vaiables eliminated until maxInstances is reached
+    val vars = varToInstance.sortBy(v => domain(v._2).size).iterator
+    while(vars.hasNext) {
+      val (i, ty) = vars.next()
+      val terms : Set[Term] = domain(ty)
+      if(maxInstances > 0 && currentInstances * terms.size > maxInstances) return clauses
+      else {
+        // Go over all clauses
+        clauses = clauses.flatMap(
+          c => terms.map(
+            t =>
+              // Substitute all literals
+              // TODO Ordered here or later?
+              // TODO not stable, if variables are remerged
+              c.mapLit(l => l.substitute(Subst.singleton(i, t)))
+          ))
+      }
+      currentInstances += terms.size
+    }
+    clauses
+  }
+}
+
+
 object Simp extends CalculusRule {
   final val name = "simp"
   final val inferenceStatus = SZS_Theorem
@@ -630,16 +666,18 @@ object Simp extends CalculusRule {
   private final val VARLEFT = 1
   private final val VARRIGHT = 2
 
-  final private def solvedUniEq(lit: Literal): Int = {
+  final private def solvedUniEq(lit: Literal): (Int, Int) = {
     if (lit.uni) {
       val left = lit.left
       val right = lit.right
-      if (left.isVariable && !right.isVariable) {
-        if(!right.freeVars.contains(left)) VARLEFT else CANNOTAPPLY
-      } else if (right.isVariable && !left.isVariable) {
-        if(!left.freeVars.contains(right)) VARRIGHT else CANNOTAPPLY
-      } else CANNOTAPPLY
-    } else CANNOTAPPLY
+      val leftIsVariable = getVariableModuloEta(left)
+      val rightIsVariable = getVariableModuloEta(right)
+      if (leftIsVariable > 0 && !(rightIsVariable > 0)) {
+        if(!right.looseBounds.contains(leftIsVariable)) (VARLEFT, leftIsVariable) else (CANNOTAPPLY, -1)
+      } else if (rightIsVariable > 0 && !(leftIsVariable > 0)) {
+        if(!left.looseBounds.contains(rightIsVariable)) (VARRIGHT, rightIsVariable) else (CANNOTAPPLY, -1)
+      } else (CANNOTAPPLY, -1)
+    } else (CANNOTAPPLY, -1)
   }
 
   final def apply(lits: Seq[Literal])(implicit sig: Signature): Seq[Literal] = {
@@ -653,13 +691,12 @@ object Simp extends CalculusRule {
 
       if (!Literal.isFalse(lit)) {
         if (!newLits.contains(lit)) {
-          val maybeSolvedUniEq = solvedUniEq(lit)
+          val (maybeSolvedUniEq, idx) = solvedUniEq(lit)
           if (maybeSolvedUniEq == CANNOTAPPLY) {
             newLits = newLits :+ lit
           } else {
-            val (vari,term) = if (maybeSolvedUniEq == VARLEFT) (lit.left,lit.right)
-                              else (lit.right, lit.left)
-            val idx = Term.Bound.unapply(vari).get._2
+            val term = if (maybeSolvedUniEq == VARLEFT) lit.right
+                              else lit.left
             val subst = Subst.singleton(idx, term)
             curSubst = curSubst.comp(subst)
           }

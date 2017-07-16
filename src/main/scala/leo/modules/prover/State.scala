@@ -1,28 +1,14 @@
 package leo.modules.prover
 
-import leo.Out
 import leo.datastructures._
-import leo.modules.{FVState, FVStateImpl, GeneralState, GeneralStateImp}
+import leo.modules.{FVState, FVStateImpl, GeneralState}
+import leo.modules.external.{Future, TptpProver, TptpResult}
+import leo.modules.prover.State.LastCallStat
 
 /**
   * Created by lex on 20.02.16.
   */
 trait State[T <: ClauseProxy] extends FVState[T] with StateStatistics {
-//  Moved to general State
-//  def copy: State[T]
-//
-//  def conjecture: T
-//  def negConjecture: T
-//  def symbolsInConjecture: Set[Signature.Key]
-//  def defConjSymbols(negConj: T): Unit
-//  def setConjecture(conj: T): Unit
-//  def setNegConjecture(negConj: T): Unit
-//
-//  def signature: Signature
-
-//  def runStrategy: RunStrategy
-//  def setRunStrategy(runStrategy: RunStrategy): Unit
-
   def initUnprocessed(): Unit
   def unprocessedLeft: Boolean
   def unprocessed: Set[T]
@@ -40,9 +26,19 @@ trait State[T <: ClauseProxy] extends FVState[T] with StateStatistics {
   def addNonRewriteUnit(cl: T): Unit
   def removeUnits(cls: Set[T]): Unit
 
-  def addChoiceFunction(f: Term): Unit
-  def choiceFunctions: Map[Type, Set[Term]]
-  final def choiceFunctions(ty: Type): Set[Term] = choiceFunctions.getOrElse(ty, Set())
+  def openExtCalls: Map[TptpProver[T], Set[Future[TptpResult[T]]]]
+  def removeOpenExtCalls(prover: TptpProver[T], calls: Set[Future[TptpResult[T]]]): Unit
+  def addOpenExtCall(prover: TptpProver[T], call: Future[TptpResult[T]]): Unit
+  def nextQueuedCall(prover: TptpProver[T]): Set[T]
+  def queuedCallExists(prover: TptpProver[T]): Boolean
+  def enqueueCall(prover: TptpProver[T], problem: Set[T]): Unit
+
+  def incTranslations : Int
+  def decTranslations : Int
+  def getTranslations : Int
+
+  def lastCall: LastCallStat[T]
+  def setLastCallStat(lcs: LastCallStat[T]): Unit
 
   def copy : State[T]
 }
@@ -75,6 +71,29 @@ trait StateStatistics {
 
 object State {
   def fresh[T <: ClauseProxy](sig: Signature): State[T] = new StateImpl[T](sig)
+
+  abstract class LastCallStat[T <: ClauseProxy] {
+    private var lastLoopCount0: Long = 0
+    private var lastProcessedSize0: Int = 0
+    private var lastTime0: Long = 0
+    private var lastProblem0: Set[T] = _
+
+    def lastLoopCount: Long = lastLoopCount0
+    def lastProcessedSize: Int = lastProcessedSize0
+    def lastTime: Long = lastTime0
+    def lastProblem: Set[T] = if (lastProblem0 == null) Set.empty else lastProblem0
+
+    def shouldCall(problem: Set[T])(implicit state: State[T]): Boolean
+
+    def calledNow(problem: Set[T])(implicit state: State[T]): Unit = {
+      lastLoopCount0 = state.noProofLoops
+      lastProcessedSize0 = state.noProcessedCl
+      lastTime0 = System.currentTimeMillis()
+      lastProblem0 = problem
+    }
+
+    def fresh: LastCallStat[T]
+  }
 }
 
 protected[prover] class StateImpl[T <: ClauseProxy](initSignature: Signature) extends FVStateImpl[T](initSignature) with State[T]{
@@ -82,9 +101,90 @@ protected[prover] class StateImpl[T <: ClauseProxy](initSignature: Signature) ex
   private var current_rewriterules: Set[T] = Set()
   private var current_nonRewriteUnits: Set[T] = Set()
 
-
   private final val sig: Signature = initSignature
   private final val mpq: MultiPriorityQueue[T] = MultiPriorityQueue.empty
+
+  private var openExtCalls0: Map[TptpProver[T], Set[Future[TptpResult[T]]]] = Map.empty
+  private var queuedTranslations : Int = 0
+  private var extCallStat: LastCallStat[T] = _
+  private var queuedExtCalls0: Map[TptpProver[T], Vector[Set[T]]] = Map.empty
+
+  def openExtCalls: Map[TptpProver[T], Set[Future[TptpResult[T]]]] = openExtCalls0
+  def lastCall: LastCallStat[T] = extCallStat
+  def setLastCallStat(lcs: LastCallStat[T]): Unit = {extCallStat = lcs}
+  def removeOpenExtCalls(prover: TptpProver[T], calls: Set[Future[TptpResult[T]]]): Unit = {
+    if (openExtCalls0.isDefinedAt(prover)) {
+      val openCalls = openExtCalls0(prover)
+      val newCalls = openCalls diff calls
+      if (newCalls.isEmpty) openExtCalls0 = openExtCalls0 - prover
+      else openExtCalls0 = openExtCalls0 + (prover -> newCalls)
+    }
+  }
+  def addOpenExtCall(prover: TptpProver[T], call: Future[TptpResult[T]]): Unit = {
+    if (openExtCalls0.isDefinedAt(prover)) {
+      val openCalls = openExtCalls0(prover)
+      openExtCalls0 = openExtCalls0 + (prover -> openCalls.+(call))
+    } else {
+      openExtCalls0 = openExtCalls0 + (prover -> Set(call))
+    }
+  }
+
+
+
+  override def incTranslations: Int = synchronized{
+    queuedTranslations += 1
+    queuedTranslations
+  }
+
+  override def decTranslations: Int = synchronized{
+    queuedTranslations -= 1
+    queuedTranslations
+  }
+
+  override def getTranslations: Int = synchronized{
+    queuedTranslations
+  }
+
+  type Pick = Boolean
+  val HEAD: Pick = false
+  val TAIL: Pick = true
+
+  var lastPick: Pick = HEAD
+
+  def nextQueuedCall(prover: TptpProver[T]): Set[T] = {
+    if (queuedExtCalls0.isDefinedAt(prover)) {
+      val list = queuedExtCalls0(prover)
+      if (list.isEmpty) throw new NoSuchElementException("nextQueueCall on empty queueExtCalls entry")
+      else {
+        val (result, newList) = if (lastPick == HEAD) {
+          lastPick = TAIL
+          (list.last, list.init)
+        } else {
+          lastPick = HEAD
+          (list.head, list.tail)
+        }
+        queuedExtCalls0 = queuedExtCalls0 + (prover -> newList)
+        result
+      }
+    } else {
+      throw new NoSuchElementException("nextQueueCall on empty queueExtCalls")
+    }
+  }
+  def queuedCallExists(prover: TptpProver[T]): Boolean = {
+    if (queuedExtCalls0.isDefinedAt(prover)) {
+      queuedExtCalls0(prover).nonEmpty
+    } else false
+  }
+  def enqueueCall(prover: TptpProver[T], problem: Set[T]): Unit = {
+    if (queuedExtCalls0.isDefinedAt(prover)) {
+      val list = queuedExtCalls0(prover)
+      val list0 = list :+ problem
+      queuedExtCalls0 = queuedExtCalls0 + (prover -> list0)
+    } else {
+      queuedExtCalls0 = queuedExtCalls0 + (prover -> Vector(problem))
+    }
+  }
+
 
   override final def copy: State[T] = {
     val state = new StateImpl[T](initSignature.copy)
@@ -101,10 +201,33 @@ protected[prover] class StateImpl[T <: ClauseProxy](initSignature: Signature) ex
     state.choiceFunctions0 = choiceFunctions0
     state.initialProblem0 = initialProblem0
     state.poly = poly
+    state.current_externalProvers = current_externalProvers
+    state.timeout0 = timeout0
+    state.domainConstr0 = domainConstr0
+    if (lastCall != null) state.extCallStat = lastCall.fresh
     state
   }
 
-  override final def copyGeneral : GeneralState[T] = copy
+  override final def copyGeneral : GeneralState[T] = {
+    val state = new StateImpl[T](sig)
+    state.current_szs = current_szs
+    state.conjecture0 = conjecture0
+    state.negConjecture0 = negConjecture0
+    state.current_processed = current_processed
+    state.current_rewriterules = current_rewriterules
+    state.current_nonRewriteUnits = current_nonRewriteUnits
+    state.derivationCl = derivationCl
+    state.current_externalProvers = current_externalProvers
+    state.runStrategy0 = runStrategy0
+    state.symbolsInConjecture0 = symbolsInConjecture0
+    state.choiceFunctions0 = choiceFunctions0
+    state.initialProblem0 = initialProblem0
+    state.poly = poly
+    state.current_externalProvers = current_externalProvers
+    state.timeout0 = timeout0
+    state.domainConstr0 = domainConstr0
+    state
+  }
   override def copyFVState: FVState[T] = copy
 
   final def initUnprocessed(): Unit = {
@@ -156,18 +279,6 @@ protected[prover] class StateImpl[T <: ClauseProxy](initSignature: Signature) ex
     current_rewriterules = current_rewriterules diff cls
     current_nonRewriteUnits = current_nonRewriteUnits diff cls
   }
-
-  private var choiceFunctions0: Map[Type, Set[Term]] = Map()
-  final def addChoiceFunction(f: Term): Unit = {
-    val choiceType = f.ty._funDomainType._funDomainType
-    if (choiceFunctions0.isDefinedAt(choiceType)) {
-      choiceFunctions0 = choiceFunctions0 + ((choiceType, choiceFunctions0(choiceType) + f))
-    } else choiceFunctions0 = choiceFunctions0 + ((choiceType, Set(f)))
-    val meta = sig(Term.Symbol.unapply(f).get)
-    meta.updateProp(meta.flag | Signature.PropChoice)
-  }
-  final def choiceFunctions: Map[Type,Set[Term]] = choiceFunctions0
-  final def choiceFunctionCount: Int = {choiceFunctions0.map {case (k,v) => v.size}.sum}
 
   // Statistics
   private var generatedCount: Int = 0

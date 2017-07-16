@@ -7,24 +7,13 @@ import leo.modules.parsers.Input
 
 
 object ScheduledRun {
-  final def apply(startTime: Long, timeout: Int, schedule: Iterator[RunStrategy]): Unit = {
+  final def apply(startTime: Long, timeout: Int, schedule0: Control.RunSchedule = null): Unit = {
     implicit val sig: Signature = Signature.freshWithHOL()
     val state: State[AnnotatedClause] = State.fresh(sig)
+    var curState: State[AnnotatedClause] = null
     try {
-      // Check if external provers were defined
-      if (Configuration.ATPS.nonEmpty) {
-        import leo.modules.external.ExternalProver
-        Configuration.ATPS.foreach { case(name, path) =>
-          try {
-            val p = ExternalProver.createProver(name,path)
-            state.addExternalProver(p)
-            leo.Out.info(s"$name registered as external prover.")
-            leo.Out.info(s"$name timeout set to:${Configuration.ATP_TIMEOUT(name)}.")
-          } catch {
-            case e: NoSuchElementException => leo.Out.warn(e.getMessage)
-          }
-        }
-      }
+      if (Configuration.ATPS.nonEmpty) Control.registerExtProver(Configuration.ATPS)(state)
+
       // Read problem from file
       val input = Input.parseProblem(Configuration.PROBLEMFILE)
       val startTimeWOParsing = System.currentTimeMillis()
@@ -46,33 +35,39 @@ object ScheduledRun {
       // and invoke SeqLoop wrt to each strategy consecutively.
       // The schedule is calculated so that the sum of
       // all timeouts is <= Configuration.TIMEOUT
+      val schedule1 = if (schedule0 != null) schedule0 else {
+        import leo.modules.control.schedulingControl.StrategyControl.calculateExtraTime
+        val extraTime = calculateExtraTime(remainingInput.size)
+        leo.Out.debug(s"extraTime: $extraTime")
+        Control.generateRunStrategies(timeout, extraTime)
+      }
+      leo.Out.config(s"Using strategy schedule: ${schedule1.map(_._1.name).mkString(",")}")
+
       var done = false
+      val schedule = schedule1.iterator
       while (schedule.hasNext && !done) {
-        val currentStrategy = schedule.next()
-        Out.info(s"Trying strategy ${currentStrategy.pretty} for ${currentStrategy.timeout}s ...")
+        val (currentStrategy, currentTimeout) = schedule.next()
+        Out.info(s"Trying (${currentTimeout}s): ${currentStrategy.pretty} ...")
         val localState = state.copy
+        curState = localState
         localState.setRunStrategy(currentStrategy)
+        localState.setTimeout(currentTimeout)
         val localStartTime = System.currentTimeMillis()
         done = SeqLoop.run(localState, remainingInput, localStartTime)
-        if (!done) Out.info(s"Strategy ${currentStrategy.pretty} failed.")
+        if (!done) Out.info(s"Failed: ${currentStrategy.pretty}")
         if (!done && schedule.hasNext) Control.resetIndexes(localState)
         if (done || !schedule.hasNext) SeqLoop.printResult(localState, startTime, startTimeWOParsing)
       }
     } catch {
-      case e:Throwable => Out.severe(s"Signature used:\n${leo.modules.signatureAsString(sig)}"); throw e
+      case e:Throwable => Out.debug(s"Signature used:\n${leo.modules.signatureAsString(curState.signature)}"); throw e
     } finally {
       if (state.externalProvers.nonEmpty)
         Control.killExternals()
     }
   }
 
-  final def apply(startTime: Long, timeout: Int): Unit = {
-    val schedule = Control.generateRunStrategies
-    apply(startTime, timeout, schedule)
-  }
-
   final def apply(startTime: Long, timeout: Int, strategy: RunStrategy): Unit = {
-    apply(startTime, timeout, Iterator(strategy))
+    apply(startTime, timeout, Iterable((strategy, timeout)))
   }
 
 

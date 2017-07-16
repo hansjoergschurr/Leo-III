@@ -1,7 +1,6 @@
 package leo.modules.external
 
 import java.io.{File, PrintWriter}
-import java.util.concurrent.TimeUnit
 
 import leo.Configuration
 import leo.datastructures.{Clause, ClauseProxy, Signature}
@@ -16,23 +15,13 @@ import leo.modules.output._
   *
   */
 trait TptpProver[C <: ClauseProxy] extends HasCapabilities {
-  /**
-    *
-    * The name of the prover
-    *
-    * @return prover name
-    */
+  /** The name of the prover. */
   def name : String
 
-  /**
-    * The path for the prover.
-    *
-    * @return prover path
-    */
+  /** The path for the prover. */
   def path : String
 
   /**
-    *
     * Calls the external prover on a set of formulas assumed to be correct.
     *
     * @param problemOrigin the clauseproxys the `concreteProblem` originates from
@@ -47,10 +36,13 @@ trait TptpProver[C <: ClauseProxy] extends HasCapabilities {
            sig: Signature, callLanguage: Capabilities.Language,
            timeout : Int,
           extraArgs: Seq[String] = Seq.empty): Future[TptpResult[C]] = {
+    leo.Out.debug(s"Calling prover $name")
     val translatedProblem = translateProblem(concreteProblem, callLanguage)(sig)
+    if (Configuration.isSet("atpdebug")) {
+      leo.Out.output(s"produced problem: #original facts ${problemOrigin.size}, #facts sent: ${concreteProblem.size}")
+    }
     startProver(translatedProblem, problemOrigin, timeout, extraArgs)
   }
-
 
   /**
     * Constructs the resulting call for the prover.
@@ -66,8 +58,8 @@ trait TptpProver[C <: ClauseProxy] extends HasCapabilities {
   /**
     * Translates the problem to a problem in TPTP syntax.
     *
-    * @param problem Set of clauses to be checked.
-    * @return
+    * @param problem Set of clauses to be sent to the external prover
+    * @param language The goal language to translate to (e.g. THF, TFF, ...)
     */
   protected[external] def translateProblem(problem : Set[Clause], language: Capabilities.Language)(implicit sig : Signature) : String = {
     if (!capabilities.contains(language)) throw new IllegalArgumentException(s"Prover $name does not support the given language.")
@@ -75,26 +67,43 @@ trait TptpProver[C <: ClauseProxy] extends HasCapabilities {
       if (language == Capabilities.THF) createTHFProblem(problem)(sig)
       else if (language == Capabilities.TFF) createTFFProblem(problem)(sig)
       else if (language == Capabilities.FOF) throw new NotImplementedError("FOF export not yet implemented")
+      else if (language == Capabilities.CNF) throw new NotImplementedError("CNF export not yet implemented")
       else throw new IllegalArgumentException("unexpected TPTP output format")
     }
   }
 
-  final private def startProver(parsedProblem : String, problem : Set[C], timeout : Int, args : Seq[String] = Seq()) : Future[TptpResult[C]] = {
-    val process : KillableProcess = {
-      val safeProverName = java.net.URLEncoder.encode(name, "UTF-8")
-      val file = File.createTempFile(s"remoteInvoke_${safeProverName}_", ".p")
-      if (!Configuration.isSet("overlord")) file.deleteOnExit()
-      leo.Out.debug(s"Sending proof obligation ${file.toString}")
+  /** Start the computation of the external prover. Returns immediately a [[leo.modules.external.Future]]
+    * that will contain the result of the call. */
+  final private def startProver(translatedProblem: String, originalProblem: Set[C],
+                                 timeout: Int,
+                                 args: Seq[String] = Seq.empty): Future[TptpResult[C]] = {
+    /* write problem to temporary file */
+    val safeProverName = java.net.URLEncoder.encode(name, "UTF-8") // used as filename
+    val file = File.createTempFile(s"remoteInvoke_${safeProverName}_", ".p")
+    if (!Configuration.isSet("overlord")) file.deleteOnExit()
+    try {
       val writer = new PrintWriter(file)
       try {
-        writer.print(parsedProblem)
-      } finally writer.close()
-      // FIX ME : If a better solution for obtaining the processID is found
-      val res = constructCall(args, timeout, file.getAbsolutePath)
-      leo.Out.debug(s"Call constructed: ${res.mkString(" ")}")
-      KillableProcess(res.mkString(" "))
+        writer.print(translatedProblem)
+        writer.flush()
+      } catch {
+        case e: Exception => leo.Out.warn(e.toString)
+      } finally {
+        writer.close()
+      }
+    } catch {
+      case e: Exception => leo.Out.warn(e.toString)
     }
-    new SZSKillFuture(process, problem, timeout)
+    /* invoke prover as external process */
+    if (Configuration.isSet("atpdebug")) {
+      leo.Out.output(s"produced file: ${file.getName}, file size: ${file.length()}")
+      leo.Out.output(s"Extra args: ${args.toString()}")
+    }
+    val callCmd = constructCall(args, timeout, file.getAbsolutePath)
+    leo.Out.debug(s"Call constructed: ${callCmd.mkString(" ")}")
+    val extProcess = new ProcessBuilder(callCmd:_*)
+    /* wrap it as future result */
+    new TPTPResultFuture(extProcess, originalProblem, timeout)
   }
 
   protected[TptpProver] class TptpResultImpl(originalProblem : Set[C], passedSzsStatus : StatusSZS, passedExitValue : Int, passedOutput : Iterable[String], passedError : Iterable[String]) extends TptpResult[C] {
@@ -145,113 +154,99 @@ trait TptpProver[C <: ClauseProxy] extends HasCapabilities {
     val error : Iterable[String] = passedError
   }
 
-  /**
-    * Performs a translation of the result of the external process.
-    *
-    * The standard implementation reads the stdOut and searches for
-    * TPTP conform SZS result
-    *
-    * @param originalProblem the original set of formulas, passed to the process
-    * @param process the process itself
-    * @return the result of the external prover, run on the originalProblem
-    */
-  protected def translateResult(originalProblem : Set[C], process : KillableProcess) : TptpResult[C] = {
-    try{
-      val exitValue = process.exitValue
-      val output = scala.io.Source.fromInputStream(process.output).getLines().toSeq
-      val error = scala.io.Source.fromInputStream(process.error).getLines().toSeq
+  protected final class TPTPResultFuture(process: ProcessBuilder,
+                                         originalProblem: Set[C],
+                                         timeout: Int) extends Future[TptpResult[C]] {
 
-      val it = output.iterator
+
+    /* internal definitions */
+    private val stdoutAnswer: StringBuilder = new StringBuilder
+    private val stderrAnswer: StringBuilder = new StringBuilder
+    private var result: TptpResult[C] = _
+    private var terminated: Boolean = false
+
+    /* start the computation */
+    private val process0: Process = process.start()
+
+    /* member definitions */
+    def isCompleted: Boolean = synchronized{ isCompleted0 }
+
+    private def isCompleted0: Boolean = {
+      if (terminated) true
+      else {
+        if (process0.isAlive) false
+        else {
+          terminated = true
+          generateResult()
+          true
+        }
+      }
+    }
+
+    def value: Option[TptpResult[C]] = synchronized{ Option(result) }
+
+    def blockValue: TptpResult[C] = synchronized{ blockValue0 }
+
+    private def blockValue0: TptpResult[C] = {
+      if (terminated) result
+      else {
+        while (!terminated) {
+          try {
+            process0.waitFor()
+            terminated = true
+          } catch {
+            case _:InterruptedException => // nop
+          }
+        }
+        generateResult()
+        result
+      }
+    }
+
+    def kill(): Unit = process0.destroyForcibly()
+
+    /**
+      * Performs a translation of the result of the external process.
+      * by reading the stdOut and searching for
+      * TPTP conform SZS result. If not existent,set SZS_GaveUp
+      */
+    private def generateResult(): Unit = try {
+      assert(terminated)
+      val exitCode = process0.exitValue()
+      val stdin = scala.io.Source.fromInputStream(process0.getInputStream).getLines().toSeq
+      val stderr = scala.io.Source.fromInputStream(process0.getErrorStream).getLines().toSeq
+
+      if (Configuration.isSet("atpdebug")) {
+        leo.Out.output("#############################")
+        leo.Out.output("name:" + name)
+        leo.Out.output("--------------------")
+        leo.Out.output("output:" + stdin.mkString("\n"))
+        leo.Out.output("--------------------")
+      }
+      val errorMsg = stderr.mkString("\n")
+      if (errorMsg != "") leo.Out.warn(s"Error message from $name:\n$errorMsg")
+
+      val szsAnswer = atpAnswerToSZS(stdin.iterator)
+      result = new TptpResultImpl(originalProblem, szsAnswer, exitCode,
+        stdoutAnswer.lines.toIterable, stderrAnswer.lines.toIterable)
+    } catch {
+      case e : Exception =>
+        val error = if(Configuration.isSet("atpdebug")) Seq(e.toString) else Seq()
+        result =  new TptpResultImpl(originalProblem, SZS_Error, -1,
+        Seq(), error)
+    }
+
+    private def atpAnswerToSZS(stdin: Iterator[String]): StatusSZS = {
       var szsStatus: StatusSZS = null
-      while (it.hasNext && szsStatus == null) {
-        val line = it.next()
+      while (stdin.hasNext && szsStatus == null) {
+        val line = stdin.next()
         StatusSZS.answerLine(line) match {
           case Some(status) => szsStatus = status
           case _ => ()
         }
       }
-      if (szsStatus == null) {
-        szsStatus = SZS_GaveUp
-      }
-      new TptpResultImpl(originalProblem, szsStatus, exitValue, output, error)
-    } catch {
-      case e : Exception => new TptpResultImpl(originalProblem, SZS_Error, 51, Seq(), Seq(e.getMessage))
+      if (szsStatus == null) SZS_GaveUp else szsStatus
     }
-  }
-
-  class SZSKillFuture(process : KillableProcess, originalProblem : Set[C], timeout : Int) extends Future[TptpResult[C]] {
-
-    private var result : TptpResult[C] = _
-    private var isTerminated = false    // If this is true, result has been set
-    private val startTime = System.currentTimeMillis()
-    private lazy val timeoutMilli = (timeout + ExternalProver.WAITFORTERMINATION) * 1000
-
-    /**
-      * Checks for the processes termination.
-      *
-      * @return true, iff the processes has finished.
-      */
-    override def isCompleted: Boolean = synchronized{
-      internalIsCompleted
-    }
-
-    private def internalIsCompleted : Boolean = {
-      if(!isTerminated) {
-        if(!process.isAlive){
-          // The external process is finished. Put the result in an Resultobject.
-          result = translateResult(originalProblem, process)
-          isTerminated = true
-        } else {
-          // The process is still alive. Check for timeout and kill if it is over
-          val cTime = System.currentTimeMillis()
-          if(cTime - startTime > timeoutMilli) {
-            result = new TptpResultImpl(originalProblem, SZS_Forced, 51, Seq(), Seq(s"$name has exceeded its timelimit of $timeout and was force fully killed."))
-            process.kill
-            isTerminated = true
-          } else {
-            isTerminated = false
-          }
-        }
-      } else {
-        // The process was previously finished. Return the previously returned result
-        isTerminated = true
-      }
-      isTerminated
-    }
-
-    /**
-      * Returns the result object after the process has finished.
-      *
-      * @return Some(result) if the process has finished, None otherwise.
-      */
-    override def value: Option[TptpResult[C]] = synchronized{if(isCompleted) Some(result) else None}
-
-    override def blockValue : TptpResult[C] = synchronized{
-      if(isTerminated) return result
-      try {
-        val time = timeoutMilli - (System.currentTimeMillis() - startTime)
-        if(time > 0) {
-          process.waitFor(time, TimeUnit.MILLISECONDS)
-          result = translateResult(originalProblem, process)
-        } else {
-          result = new TptpResultImpl(originalProblem, SZS_Timeout, 51, Seq(), Seq(s"$name has exceeded its timelimit of $timeout and was force fully killed."))
-        }
-      } catch {
-        case e : InterruptedException =>
-          leo.Out.info(s"Call to prover $name was terminated by an interrupted exception.")
-          result = new TptpResultImpl(originalProblem, SZS_Forced, 51, Seq(), Seq(s"$name has encountered an interrupted exception."))
-        case _ : Exception =>
-          leo.Out.info(s"Call to prover $name was terminated by an exception.")
-          result = new TptpResultImpl(originalProblem, SZS_Forced, 51, Seq(), Seq(s"$name has encountered an exception."))
-      }
-      isTerminated = true
-      result
-    }
-
-    /**
-      * Forcibly kills the underlying process calculating the future's result.
-      */
-    override def kill(): Unit = process.kill
   }
 }
 

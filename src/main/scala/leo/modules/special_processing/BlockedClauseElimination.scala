@@ -303,9 +303,10 @@ object BlockedClauseElimination extends CalculusRule {
         clauseLiteralPairs.foreach((cl: (Clause, Literal)) => {
           val rnp = if(cl._2.flexHead) {
             // If flex I could potentially unify with rigid heads of both polarities.
-            rigidNonPatterns((cl._2.polarity, cl._2.left)) union rigidNonPatterns((! cl._2.polarity, cl._2.left))
+            rigidNonPatterns.getOrElse((cl._2.polarity, cl._2.left), Set.empty) union
+              rigidNonPatterns.getOrElse((! cl._2.polarity, cl._2.left), Set.empty)
             }
-          else rigidNonPatterns((! cl._2.polarity, cl._2.left))
+          else rigidNonPatterns.getOrElse((! cl._2.polarity, cl._2.left), Set.empty)
           if(rnp.isEmpty) {
             queue.enqueue(cl -> rigidPatternIndex.numTotalPartners(cl._2))
           }

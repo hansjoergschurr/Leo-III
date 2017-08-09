@@ -211,19 +211,19 @@ object SeqLoop {
       }
 
       if(Configuration.isSet("bce_activate")){
-        Out.debug("## Blocked Clause Elimination")
+        Out.info("## Blocked Clause Elimination")
         afterPreprocessed = Control.blockedClauseElimination(afterPreprocessed)
       }
       if(Configuration.isSet("sce_activate")){
-        Out.debug("## SAT based constant extraction")
+        Out.info("## SAT based constant extraction")
         afterPreprocessed = afterPreprocessed.union(Control.satBasedUnitClauses(afterPreprocessed))
       }
       if(Configuration.isSet("ure_activate")){
-        Out.debug("## Universal reduction")
+        Out.info("## Universal reduction")
         afterPreprocessed = Control.universalReduction(afterPreprocessed)
       }
       if(Configuration.isSet("fre_activate")){
-        Out.debug("## First-order Re-encoding")
+        Out.info("## First-order Re-encoding")
         afterPreprocessed = Control.firstOrderReEncoding(afterPreprocessed)
       }
 

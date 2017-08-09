@@ -124,12 +124,11 @@ object BlockedClauseElimination extends CalculusRule {
     * @return true if `blockingLit` is blocking C rel. to D
     */
   def isNotResOrValid(C: Clause, blockingLit: Literal, D: Clause, partners: Set[Literal])(implicit sig: Signature) : Boolean = {
-    val resolvent = Clause(C.lits ++ D.lits)
-    val vargen = leo.modules.calculus.freshVarGen(resolvent)
     val maxFree = C.maxImplicitlyBound
 
     val D_lifted = D.substitute(Subst.shift(maxFree))
     val base = C.lits ++ D_lifted.lits
+    val vargen = leo.modules.calculus.freshVarGen(Clause(base))
 
     val blocking_const = blockingLit.left
     val blocking_const_inverse = Not(blocking_const)

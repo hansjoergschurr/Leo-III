@@ -27,7 +27,7 @@ object PreprocessingControl {
   }
 
   final def firstOrderReEncoding(clSet: Set[AnnotatedClause])(implicit sig: Signature): Set[AnnotatedClause] = {
-    val wrapEqs = Configuration.isSet("fre_dontWrapEqs")
-    FirstOrderReEncoding.reencodeBooleans(clSet, !wrapEqs)
+    val wrapEqs = Configuration.isSet("fre_wrapEqs")
+    FirstOrderReEncoding.reencodeBooleans(clSet, wrapEqs)
   }
 }

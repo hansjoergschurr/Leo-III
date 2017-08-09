@@ -22,7 +22,7 @@ object FirstOrderReEncoding extends CalculusRule {
     * @return A new matrix.
     */
   def reencodeBooleans(clauses : Set[AnnotatedClause],
-                       wrapEqualities: Boolean = true)(implicit sig: Signature) : Set[AnnotatedClause] = {
+                       wrapEqualities: Boolean = false)(implicit sig: Signature) : Set[AnnotatedClause] = {
     val p = mkAtom(sig.addUninterpreted("BoolEnc", o ->: o))
     val p_true = mkTermApp(p, LitTrue)
     val p_false = mkTermApp(p, LitFalse)
